@@ -65,7 +65,9 @@
         targetY: 1,
         maxHP: 20,
         currentHP: 20,
-        attackPower: 5
+        attackPower: 5,
+        level: 1,
+        experience: 0
     };
 
     const keys = {};
@@ -88,7 +90,8 @@
             color: '#cc3333',
             maxHP: 10,
             currentHP: 10,
-            attackPower: 3
+            attackPower: 3,
+            expReward: 8
         },
         phase: 'MENU',
         gameOver: false,
@@ -167,9 +170,16 @@
 
                 if (combat.monster.currentHP <= 0) {
                     combat.monster.currentHP = 0;
-                    combat.battleLog = 'Monster defeated! Victory!';
                     combat.phase = 'VICTORY';
                     combat.gameOver = true;
+
+                    // Hand the monster's EXP to the player via the
+                    // progression module, which also handles level-ups.
+                    const leveledUp = window.Progression.gainExperience(player, combat.monster.expReward);
+
+                    combat.battleLog = leveledUp
+                        ? 'Monster defeated! You reached Lv ' + player.level + '!'
+                        : 'Monster defeated! Victory! + ' + combat.monster.expReward + ' EXP.';
                 } else {
                     player.currentHP -= combat.monster.attackPower;
                     combat.battleLog += ' Monster counters for ' + combat.monster.attackPower + '!';
@@ -327,6 +337,14 @@
             'Player HP: ' + player.currentHP + '/' + player.maxHP,
             CANVAS_WIDTH / 2,
             16
+        );
+
+        const expToNext = window.Progression.experienceToNextLevel(player.experience);
+        ctx.fillText(
+            'Lv ' + player.level +
+                (expToNext !== null ? '  EXP to next: ' + expToNext : '  MAX'),
+            CANVAS_WIDTH / 2,
+            26
         );
 
         ctx.fillStyle = '#000000';
