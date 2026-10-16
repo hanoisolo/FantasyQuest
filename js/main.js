@@ -67,7 +67,8 @@
         currentHP: 20,
         attackPower: 5,
         level: 1,
-        experience: 0
+        experience: 0,
+        gold: 0
     };
 
     const keys = {};
@@ -91,7 +92,8 @@
             maxHP: 10,
             currentHP: 10,
             attackPower: 3,
-            expReward: 8
+            expReward: 8,
+            goldReward: 12
         },
         phase: 'MENU',
         gameOver: false,
@@ -177,9 +179,12 @@
                     // progression module, which also handles level-ups.
                     const leveledUp = window.Progression.gainExperience(player, combat.monster.expReward);
 
+                    // Loot: the monster's gold goes straight to the purse.
+                    player.gold += combat.monster.goldReward;
+
                     combat.battleLog = leveledUp
                         ? 'Monster defeated! You reached Lv ' + player.level + '!'
-                        : 'Monster defeated! Victory! + ' + combat.monster.expReward + ' EXP.';
+                        : 'Monster defeated! Victory! + ' + combat.monster.expReward + ' EXP, + ' + combat.monster.goldReward + 'G.';
                 } else {
                     player.currentHP -= combat.monster.attackPower;
                     combat.battleLog += ' Monster counters for ' + combat.monster.attackPower + '!';
@@ -346,6 +351,8 @@
             CANVAS_WIDTH / 2,
             26
         );
+
+        ctx.fillText('Gold: ' + player.gold + 'G', CANVAS_WIDTH / 2, 36);
 
         ctx.fillStyle = '#000000';
         ctx.fillRect(0, CANVAS_HEIGHT - 48, CANVAS_WIDTH, 48);
