@@ -19,17 +19,20 @@ python -m http.server 8000
 
 Then visit `http://localhost:8000`.
 
-Controls on the launcher screen:
+Controls:
 
+- On the title screen, click / tap or press `Space` / `Enter` to enter the battle arena (Pass 1).
+- In battle, click the command buttons: `ATTACK` (then click a glowing enemy to target it), `MAGIC` (10 MP, hits all enemies), `ITEM` (use the Arcane Crystal to heal 50 HP, once per battle), `DEFEND` (halve incoming damage for one enemy turn).
 - Click the `CRT: ON` button or press `S` to toggle the CRT scanline effect.
 
 ## Project Structure
 
 ```
 FantasyQuest/
-├── index.html                 Retro launcher + intro screen
+├── index.html                 Retro launcher + intro + battle scenes
 ├── styles.css                 Retro layout, dialogue box, CRT scanlines
-├── js/                        Game engine scripts
+├── audio.js                   Web Audio 16-bit SFX synthesizer
+├── battle.js                  Turn-based battle engine (Pass 1)
 ├── assets/
 │   ├── backgrounds/           Battle and scene backdrops
 │   ├── portraits/             Character dialogue portraits

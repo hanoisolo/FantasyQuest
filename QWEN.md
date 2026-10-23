@@ -20,7 +20,7 @@
 
 \* \*\*Separation of Concerns:\*\* Keep code highly modular. Separate the Game Loop, State Management, Input Handling, and Rendering logic into distinct functions or classes.
 
-\* \*\*File Structure:\*\* Maintain everything in a clean structure. Use `index.html`, `style.css`, and a `/js` directory for JavaScript modules if the codebase grows.
+\* \*\*File Structure:\*\* Maintain everything in a clean structure. Use `index.html` and `styles.css` at the root, with top-level JS modules (`audio.js`, `battle.js`, ...) loaded via `<script>` tags. Do not reintroduce the old `style.css` / `js/main.js` canvas prototype files.
 
 \* \*\*Step-by-Step Execution:\*\* Do not write the entire game at once. Wait for specific user prompts for each phase (e.g., "Phase 1: Basic Loop", "Phase 2: Grid Movement").
 
