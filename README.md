@@ -38,7 +38,7 @@ FantasyQuest/
 ├── assets/
 │   ├── backgrounds/           Battle and scene backdrops
 │   ├── portraits/             Character dialogue portraits
-│   ├── sprites/               Character and creature spritesheets
+│   ├── sprites/               Enemy battle sprites (player and map tiles planned)
 │   ├── items/                 Item and relic icons
 │   ├── audio/                 Music and sound effects
 │   └── ui/                    UI elements (frames, cursors, icons)
@@ -56,6 +56,8 @@ FantasyQuest/
 | hero_neutral.png | assets/portraits/ | 1376x768 | No | Hero portrait shown in the dialogue box |
 | hero_battle.png | assets/portraits/ | 1376x768 | No | Hero battle portrait for combat scenes |
 | relic_crystal.png | assets/items/ | 1024x1024 | No | The Relic Crystal quest item icon |
+| goblin_battle.png | assets/sprites/ | 32x32 | Yes | Forest Goblin battle sprite (placeholder pixel art) |
+| wolf_battle.png | assets/sprites/ | 32x32 | Yes | Shadow Wolf battle sprite (placeholder pixel art) |
 
 ### Planned assets
 
@@ -73,6 +75,11 @@ FantasyQuest/
 
 ## Notes
 
+- `assets/sprites/` holds enemy battle sprites wired into the battle scene by
+  `battle.js`. They render with `image-rendering: pixelated` at 32x32 source
+  resolution; if a sprite file fails to load, the styled silhouette fallback art
+  is shown instead so the battle never breaks. The two current sprites are
+  local placeholder stand-ins to be replaced with hand-drawn pixel art later.
 - The generated artwork was delivered as JPEG data with `.png` filenames; the
   four active assets were re-encoded as true PNGs on import, so the extensions
   now match the actual format. None of them carry an alpha channel; UI cutouts
