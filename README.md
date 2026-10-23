@@ -23,6 +23,7 @@ Controls:
 
 - On the title screen, click / tap or press `Space` / `Enter` to enter the battle arena (Pass 1).
 - In battle, click the command buttons: `ATTACK` (then click a glowing enemy to target it), `MAGIC` (10 MP, hits all enemies), `ITEM` (use the Arcane Crystal to heal 50 HP, once per battle), `DEFEND` (halve incoming damage for one enemy turn).
+- Winning a battle awards EXP and Gold (Phase 9/10). Leveling up raises MaxHP (+5) and Attack (+2) and fully heals the hero. Level, EXP, and Gold persist across battles and are shown in the hero HUD.
 - Click the `CRT: ON` button or press `S` to toggle the CRT scanline effect.
 
 ## Project Structure
@@ -32,7 +33,8 @@ FantasyQuest/
 ├── index.html                 Retro launcher + intro + battle scenes
 ├── styles.css                 Retro layout, dialogue box, CRT scanlines
 ├── audio.js                   Web Audio 16-bit SFX synthesizer
-├── battle.js                  Turn-based battle engine (Pass 1)
+├── progression.js             EXP & leveling module (Phase 9)
+├── battle.js                  Turn-based battle engine (Pass 1 + Phase 9/10 rewards)
 ├── assets/
 │   ├── backgrounds/           Battle and scene backdrops
 │   ├── portraits/             Character dialogue portraits

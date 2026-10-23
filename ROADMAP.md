@@ -1,30 +1,30 @@
 RPG Development Roadmap Phases
 
-Phase 9: Experience and Leveling
+Phase 9: Experience and Leveling [DONE]
 
 
 
-Implement an EXP drop for the monster upon defeat.
+Implement an EXP drop for the monster upon defeat. (Each enemy in battle.js CONFIG carries expReward; awarded on victory.)
 
 
 
-Track player EXP and set thresholds for level-ups.
+Track player EXP and set thresholds for level-ups. (progression.js: LEVEL_THRESHOLDS [0,20,50,100,180,300,480]; HUD shows LV + EXP.)
 
 
 
-Automatically increase MaxHP and AttackPower when a level threshold is reached.
+Automatically increase MaxHP and AttackPower when a level threshold is reached. (+5 MaxHP, +2 attackDamage per level; full heal on level-up.)
 
 
 
-Phase 10: Currency and Loot
+Phase 10: Currency and Loot [DONE]
 
 
 
-Add a Gold (G) drop to monsters.
+Add a Gold (G) drop to monsters. (Each enemy carries goldReward; HUD shows current gold.)
 
 
 
-Track Gold in the player's inventory object.
+Track Gold in the player's inventory object. (Hero profile persists gold across battles.)
 
 
 
