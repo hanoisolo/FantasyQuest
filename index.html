@@ -168,6 +168,10 @@
                         if (name === 'battle' && window.Battle) {
                             window.Battle.init();
                         }
+                        if (name === 'overworld' && window.OverworldScene) {
+                            window.OverworldScene.initOverworld(
+                                document.getElementById('overworld-container'));
+                        }
                     }, 130);
                 }
 
@@ -190,7 +194,7 @@
                 if (window.RetroAudio) {
                     RetroAudio.beep();
                 }
-                Scene.transition('battle');
+                Scene.transition('overworld');
                 titleScene.removeEventListener('click', startGame);
                 titleScene.removeEventListener('touchstart', startGame);
             }
@@ -205,21 +209,6 @@
                     startGame();
                 }
             });
-        })();
-    </script>
-
-    <!-- TODO(Phase 11 Segment 3): temporary direct overworld init for the
-         Segment 2 rendering check only. Segment 3 replaces this with the
-         proper title-screen scene flow. -->
-    <script>
-        (function () {
-            'use strict';
-            var container = document.getElementById('overworld-container');
-            if (container && window.OverworldScene) {
-                window.OverworldScene.initOverworld(container);
-                document.getElementById('scene-title').classList.remove('active');
-                document.getElementById('scene-overworld').classList.add('active');
-            }
         })();
     </script>
 </body>

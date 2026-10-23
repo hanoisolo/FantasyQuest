@@ -45,9 +45,12 @@ var OverworldScene = (function () {
         D: 'right'
     };
     var ARROW_KEYS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'];
+    var INTERACT_KEYS = ['e', 'E', ' ', 'Enter'];
 
     var U = null;   // scene state (grid, hero marker, player, loop)
     var wired = false;
+    var loopStarted = false;
+    var victoryReturnWired = false;
 
     // ------------------------------------------------------------------
     // DOM construction
@@ -104,6 +107,33 @@ var OverworldScene = (function () {
         return marker;
     }
 
+    // NPC markers: flat-color stand-ins, one per NPC, class named by id
+    // (npc-<id>) so sprite art can slot in at assets/sprites/<id>_map.png.
+    function buildNpcMarkers(npcs) {
+        var markers = [];
+        for (var i = 0; i < npcs.length; i++) {
+            var npc = npcs[i];
+            var marker = document.createElement('div');
+            marker.className = 'npc-marker npc-' + npc.id;
+            marker.setAttribute('data-npc-id', npc.id);
+            marker.style.left = (npc.x * TILE_PX) + 'px';
+            marker.style.top = (npc.y * TILE_PX) + 'px';
+            marker.setAttribute('title', npc.name);
+            markers.push(marker);
+        }
+        return markers;
+    }
+
+    // Retro dialogue box shown at the bottom of the overworld.
+    function buildDialogueBox() {
+        var box = document.createElement('div');
+        box.className = 'overworld-dialogue hidden';
+        box.innerHTML =
+            '<p class="npc-name" id="dialogue-npc-name"></p>' +
+            '<p class="npc-line" id="dialogue-line"></p>';
+        return box;
+    }
+
     function fitBoard() {
         if (!U || !U.container || !U.board) {
             return;
@@ -140,6 +170,108 @@ var OverworldScene = (function () {
     }
 
     // ------------------------------------------------------------------
+    // Scene flow: encounters and returning to the map
+    // ------------------------------------------------------------------
+
+    function showScene(name) {
+        var scenes = document.querySelectorAll('.scene');
+        for (var i = 0; i < scenes.length; i++) {
+            scenes[i].classList.toggle('active', scenes[i].id === 'scene-' + name);
+        }
+    }
+
+    function startEncounter(enemyId) {
+        if (!U) {
+            return;
+        }
+        U.paused = true;       // overworld input pauses for the battle
+        U.inEncounter = true;
+        showScene('battle');
+        wireVictoryReturn();
+        // The battle engine keeps the in-memory hero profile, so level,
+        // EXP, and gold carry across overworld encounters.
+        if (window.Battle) {
+            window.Battle.init(enemyId);
+        }
+    }
+
+    function wireVictoryReturn() {
+        if (victoryReturnWired) {
+            return;
+        }
+        victoryReturnWired = true;
+        var btn = document.getElementById('victory-again');
+        if (btn) {
+            btn.addEventListener('click', function () {
+                if (U && U.inEncounter) {
+                    returnToOverworld();
+                }
+            });
+        }
+    }
+
+    function returnToOverworld() {
+        if (!U) {
+            return;
+        }
+        // Fresh grace period so the player is not ambushed right after winning.
+        U.player = window.Overworld.resetEncounterCounter(U.player);
+        U.inEncounter = false;
+        U.paused = false;
+        showScene('overworld');
+        refreshOverworld(); // hero is restored to the tile he was standing on
+    }
+
+    // ------------------------------------------------------------------
+    // Interaction and dialogue
+    // ------------------------------------------------------------------
+
+    function renderDialogue() {
+        if (!U || !U.dialogue || !U.dialogueBox) {
+            return;
+        }
+        U.dialogueBox.querySelector('.npc-name').textContent = U.dialogue.name;
+        U.dialogueBox.querySelector('.npc-line').textContent = U.dialogue.lines[U.dialogue.index];
+    }
+
+    function showDialogue() {
+        if (U.dialogueBox) {
+            U.dialogueBox.classList.remove('hidden');
+        }
+    }
+
+    function hideDialogue() {
+        if (U.dialogueBox) {
+            U.dialogueBox.classList.add('hidden');
+        }
+    }
+
+    // E / Space / Enter: open a dialogue with the faced NPC, advance the
+    // current line, or close the box after the last line.
+    function handleInteraction() {
+        if (!U || U.paused) {
+            return;
+        }
+        if (U.dialogue) {
+            U.dialogue = window.Overworld.advanceDialogue(U.dialogue);
+            if (U.dialogue.open) {
+                renderDialogue();
+            } else {
+                U.dialogue = window.Overworld.endDialogue(U.dialogue);
+                U.dialogue = null;
+                hideDialogue(); // movement input resumes
+            }
+            return;
+        }
+        var npc = window.Overworld.getFacingNpc(U.map, U.npcs, U.player);
+        if (npc) {
+            U.dialogue = window.Overworld.startDialogue(npc);
+            renderDialogue();
+            showDialogue();
+        }
+    }
+
+    // ------------------------------------------------------------------
     // Input
     // ------------------------------------------------------------------
 
@@ -149,7 +281,15 @@ var OverworldScene = (function () {
         }
         wired = true;
         document.addEventListener('keydown', function (event) {
-            if (!U) {
+            if (!U || U.paused) {
+                return; // no input before init or while a battle is running
+            }
+            // Interaction keys: open / advance / close NPC dialogue.
+            if (INTERACT_KEYS.indexOf(event.key) !== -1) {
+                if (event.key === ' ' || event.key === 'Enter') {
+                    event.preventDefault(); // stop the page from scrolling
+                }
+                handleInteraction();
                 return;
             }
             var direction = KEY_TO_DIRECTION[event.key];
@@ -159,6 +299,10 @@ var OverworldScene = (function () {
             // Stop arrow keys from scrolling the page.
             if (ARROW_KEYS.indexOf(event.key) !== -1) {
                 event.preventDefault();
+            }
+            // Movement input is locked while dialogue is open.
+            if (U.dialogue) {
+                return;
             }
             // Input is ignored while a step animation is in progress.
             if (U.player.moving.active) {
@@ -175,17 +319,26 @@ var OverworldScene = (function () {
     // ------------------------------------------------------------------
 
     function startLoop() {
-        if (!window.requestAnimationFrame) {
-            return; // headless/test environments: logic still advances via attemptMove
+        if (loopStarted || !window.requestAnimationFrame) {
+            return; // one loop per page; headless envs drive logic directly
         }
+        loopStarted = true;
         var lastTs = null;
         var step = function (ts) {
-            if (U && U.player && U.player.moving.active) {
+            if (U && !U.paused && U.player && U.player.moving.active) {
                 var dt = lastTs === null ? 0 : ts - lastTs;
                 // Direction is ignored while a step is active (input lock);
                 // this tick only advances the step by delta-time.
                 U.player = window.Overworld.attemptMove(U.player, U.player.facing, dt);
                 refreshOverworld();
+                if (!U.player.moving.active) {
+                    // The step landed on walkable terrain: register it
+                    // for the random encounter roll.
+                    U.player = window.Overworld.registerStep(U.player, Math.random);
+                    if (U.player.encounter.triggered) {
+                        startEncounter(U.player.encounter.lastEnemyId);
+                    }
+                }
             }
             lastTs = ts;
             window.requestAnimationFrame(step);
@@ -204,6 +357,7 @@ var OverworldScene = (function () {
 
         var map = window.Overworld.buildFirstMap();
         var player = window.Overworld.createPlayerState(map, 8, 12);
+        var npcs = player.npcs;
 
         container.innerHTML = '';
         container.classList.add('overworld-container');
@@ -213,10 +367,17 @@ var OverworldScene = (function () {
 
         var grid = buildGrid(map);
         var hero = buildHero();
+        var npcMarkers = buildNpcMarkers(npcs);
 
         board.appendChild(grid);
+        for (var n = 0; n < npcMarkers.length; n++) {
+            board.appendChild(npcMarkers[n]);
+        }
         board.appendChild(hero);
         container.appendChild(board);
+
+        var dialogueBox = buildDialogueBox();
+        container.appendChild(dialogueBox);
 
         U = {
             container: container,
@@ -224,7 +385,12 @@ var OverworldScene = (function () {
             grid: grid,
             hero: hero,
             map: map,
-            player: player
+            npcs: npcs,
+            player: player,
+            dialogue: null,
+            dialogueBox: dialogueBox,
+            paused: false,
+            inEncounter: false
         };
 
         wireInput();

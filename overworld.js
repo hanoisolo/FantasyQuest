@@ -28,6 +28,11 @@ var Overworld = (function () {
 
     var MOVE_DURATION_MS = 200; // one grid step takes this long
 
+    // Random encounter tuning (Phase 11 Segment 3).
+    var ENCOUNTER_RATE = 0.15;          // chance per registered step
+    var ENCOUNTER_GRACE_STEPS = 3;      // safe steps after entering / last battle
+    var ENCOUNTER_ENEMY_POOL = ['goblin', 'wolf']; // 50/50 weight
+
     var DIRECTION_DELTAS = {
         up: { dx: 0, dy: -1 },
         down: { dx: 0, dy: 1 },
@@ -63,6 +68,33 @@ var Overworld = (function () {
         P: TILE.PATH
     };
 
+    // Non-hostile NPCs on the first map (Phase 11 Segment 4).
+    // Marker art later: assets/sprites/<id>_map.png — ids stay stable.
+    var NPCS = [
+        {
+            id: 'villager',
+            name: 'Old Villager',
+            x: 9,   // grass beside the path
+            y: 9,
+            dialogue: [
+                'Ah, a fresh face in the forest clearing...',
+                'Beware the pond path, traveler. Goblins lurk beyond.',
+                'Take the crystal relic with you. It may save your life.'
+            ]
+        },
+        {
+            id: 'guard',
+            name: 'Pond Guard',
+            x: 11,  // grass at the pond's edge, by the path end
+            y: 5,
+            dialogue: [
+                'Halt! This pond feeds the whole clearing.',
+                'Shadow wolves drink here at dusk. Stay sharp.',
+                'Move along the path, and keep your blade ready.'
+            ]
+        }
+    ];
+
     // ------------------------------------------------------------------
     // Map
     // ------------------------------------------------------------------
@@ -95,12 +127,13 @@ var Overworld = (function () {
     // Player state
     // ------------------------------------------------------------------
 
-    function createPlayerState(map, x, y, facing) {
+    function createPlayerState(map, x, y, facing, npcs) {
         return {
             x: x,
             y: y,
             facing: facing || 'down',
             map: map,
+            npcs: npcs || NPCS, // shared read-only reference, never mutated
             moving: {
                 active: false,
                 progress: 0,
@@ -108,6 +141,11 @@ var Overworld = (function () {
                 fromY: y,
                 toX: x,
                 toY: y
+            },
+            encounter: {
+                stepsSinceReset: 0, // steps counted toward the next encounter roll
+                triggered: false,   // true when the last registerStep rolled an encounter
+                lastEnemyId: null   // 'goblin' | 'wolf' when triggered
             }
         };
     }
@@ -118,6 +156,7 @@ var Overworld = (function () {
             y: state.y,
             facing: state.facing,
             map: state.map, // shared read-only reference, never mutated
+            npcs: state.npcs, // shared read-only reference, never mutated
             moving: {
                 active: state.moving.active,
                 progress: state.moving.progress,
@@ -125,6 +164,11 @@ var Overworld = (function () {
                 fromY: state.moving.fromY,
                 toX: state.moving.toX,
                 toY: state.moving.toY
+            },
+            encounter: {
+                stepsSinceReset: state.encounter.stepsSinceReset,
+                triggered: state.encounter.triggered,
+                lastEnemyId: state.encounter.lastEnemyId
             }
         };
     }
@@ -178,7 +222,8 @@ var Overworld = (function () {
         var toX = next.x + delta.dx;
         var toY = next.y + delta.dy;
 
-        if (!isWalkableTile(next.map, toX, toY)) {
+        // Blocked by terrain or by an NPC standing on the target tile.
+        if (!isWalkableTile(next.map, toX, toY) || npcAt(next.npcs, toX, toY)) {
             return next; // blocked: position stays on the current tile
         }
 
@@ -198,13 +243,149 @@ var Overworld = (function () {
         return next;
     }
 
+    // ------------------------------------------------------------------
+    // Random encounters (pure logic)
+    // ------------------------------------------------------------------
+
+    /*
+     * pickEncounterEnemy(rng) -> 'goblin' | 'wolf' (50/50 weight).
+     * rng is injectable; defaults to Math.random.
+     */
+    function pickEncounterEnemy(rng) {
+        var roll = rng ? rng() : Math.random();
+        return roll < 0.5 ? ENCOUNTER_ENEMY_POOL[0] : ENCOUNTER_ENEMY_POOL[1];
+    }
+
+    /*
+     * registerStep(state, rng) -> new state (input never mutated).
+     * Called by the scene layer after each successful move onto walkable
+     * terrain. The first ENCOUNTER_GRACE_STEPS steps after entering the map
+     * or after the last battle never trigger, so the player is never
+     * ambushed immediately. From step ENCOUNTER_GRACE_STEPS + 1 on, each
+     * step rolls rng(); a roll under ENCOUNTER_RATE triggers an encounter
+     * and picks the enemy with a second roll.
+     */
+    function registerStep(state, rng) {
+        var next = cloneState(state);
+        next.encounter.stepsSinceReset = state.encounter.stepsSinceReset + 1;
+        next.encounter.triggered = false;
+
+        if (next.encounter.stepsSinceReset <= ENCOUNTER_GRACE_STEPS) {
+            return next; // grace period: no roll, no ambush
+        }
+
+        var roll = rng ? rng() : Math.random();
+        if (roll < ENCOUNTER_RATE) {
+            next.encounter.triggered = true;
+            next.encounter.lastEnemyId = pickEncounterEnemy(rng);
+            next.encounter.stepsSinceReset = 0; // fresh grace after this battle
+        }
+        return next;
+    }
+
+    /*
+     * resetEncounterCounter(state) -> new state.
+     * Called when returning to the map after a battle so the next
+     * ENCOUNTER_GRACE_STEPS steps are safe again.
+     */
+    function resetEncounterCounter(state) {
+        var next = cloneState(state);
+        next.encounter.stepsSinceReset = 0;
+        next.encounter.triggered = false;
+        return next;
+    }
+
+    // ------------------------------------------------------------------
+    // NPCs and dialogue (pure logic)
+    // ------------------------------------------------------------------
+
+    function npcAt(npcs, x, y) {
+        for (var i = 0; i < npcs.length; i++) {
+            if (npcs[i].x === x && npcs[i].y === y) {
+                return npcs[i];
+            }
+        }
+        return null;
+    }
+
+    /*
+     * getFacingNpc(map, npcs, player) -> NPC or null.
+     * Returns the NPC standing on the tile directly in front of the
+     * player, based on the player's facing direction.
+     */
+    function getFacingNpc(map, npcs, player) {
+        var delta = DIRECTION_DELTAS[player.facing];
+        if (!delta) {
+            return null;
+        }
+        return npcAt(npcs, player.x + delta.dx, player.y + delta.dy);
+    }
+
+    function cloneDialogue(d) {
+        return {
+            npcId: d.npcId,
+            name: d.name,
+            lines: d.lines, // shared read-only reference, never mutated
+            index: d.index,
+            open: d.open
+        };
+    }
+
+    /*
+     * Dialogue state machine — pure, one line per advance call:
+     *   startDialogue(npc)  -> fresh open dialogue at line 0
+     *   advanceDialogue(d)  -> next line; advancing off the last line
+     *                          closes the dialogue; a closed dialogue
+     *                          cannot advance further
+     *   endDialogue(d)      -> closed dialogue (same line preserved)
+     */
+    function startDialogue(npc) {
+        return {
+            npcId: npc.id,
+            name: npc.name,
+            lines: npc.dialogue.slice(0),
+            index: 0,
+            open: true
+        };
+    }
+
+    function advanceDialogue(dialogue) {
+        var next = cloneDialogue(dialogue);
+        if (!next.open) {
+            return next; // cannot advance past the end
+        }
+        if (next.index < next.lines.length - 1) {
+            next.index += 1;
+            return next;
+        }
+        next.open = false; // advancing off the last line ends the dialogue
+        return next;
+    }
+
+    function endDialogue(dialogue) {
+        var next = cloneDialogue(dialogue);
+        next.open = false;
+        return next;
+    }
+
     return {
         TILE: TILE,
         MOVE_DURATION_MS: MOVE_DURATION_MS,
         DIRECTION_DELTAS: DIRECTION_DELTAS,
+        ENCOUNTER_RATE: ENCOUNTER_RATE,
+        ENCOUNTER_GRACE_STEPS: ENCOUNTER_GRACE_STEPS,
+        NPCS: NPCS,
         buildFirstMap: buildFirstMap,
         isWalkableTile: isWalkableTile,
         createPlayerState: createPlayerState,
-        attemptMove: attemptMove
+        attemptMove: attemptMove,
+        registerStep: registerStep,
+        resetEncounterCounter: resetEncounterCounter,
+        pickEncounterEnemy: pickEncounterEnemy,
+        npcAt: npcAt,
+        getFacingNpc: getFacingNpc,
+        startDialogue: startDialogue,
+        advanceDialogue: advanceDialogue,
+        endDialogue: endDialogue
     };
 })();

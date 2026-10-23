@@ -778,3 +778,56 @@ canvas#game-canvas {
     width: 100%;
     height: 100%;
 }
+
+/* --- NPC markers (Phase 11 Segment 4) --- */
+
+.npc-marker {
+    position: absolute;
+    width: 32px;
+    height: 32px;
+    z-index: 4;
+    box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.4);
+}
+
+.npc-villager {
+    background: #b8860b;
+}
+
+.npc-guard {
+    background: #7a7f8a;
+}
+
+/* --- Overworld dialogue box (retro style, bottom of the map) --- */
+
+.overworld-dialogue {
+    position: absolute;
+    left: 50%;
+    bottom: 4%;
+    transform: translateX(-50%);
+    z-index: 10;
+    width: min(92%, 560px);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 14px;
+    background: var(--panel);
+    border: 3px solid var(--panel-edge);
+    outline: 3px solid var(--panel-edge-dark);
+    box-shadow: inset 0 0 0 2px #000, 0 10px 24px var(--shadow);
+}
+
+.overworld-dialogue .npc-name {
+    margin: 0;
+    font-size: clamp(9px, 1.4vw, 11px);
+    letter-spacing: 0.25em;
+    color: var(--panel-edge);
+    text-shadow: 1px 1px 0 #000;
+}
+
+.overworld-dialogue .npc-line {
+    margin: 0;
+    font-size: clamp(11px, 1.8vw, 14px);
+    letter-spacing: 0.06em;
+    color: var(--ink);
+    text-shadow: 1px 1px 0 #000;
+}

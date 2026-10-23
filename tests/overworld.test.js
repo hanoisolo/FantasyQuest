@@ -171,6 +171,159 @@ eq(noop.x, start.x, 'unknown direction: x unchanged');
 eq(noop.facing, start.facing, 'unknown direction: facing unchanged');
 eq(noop.moving.active, false, 'unknown direction: no step starts');
 
+// ---- Random encounters (Phase 11 Segment 3) -------------------------------
+console.log('\n== Phase 11: Random encounters ==');
+
+// Injectable rng: returns values from a fixed sequence in order.
+function seq(values) {
+  let i = 0;
+  return () => values[Math.min(i++, values.length - 1)];
+}
+
+eq(Overworld.ENCOUNTER_RATE, 0.15, 'ENCOUNTER_RATE is 0.15');
+eq(Overworld.ENCOUNTER_GRACE_STEPS, 3, 'ENCOUNTER_GRACE_STEPS is 3');
+
+// Encounter state is initialized with every fresh player state
+const enc0 = Overworld.createPlayerState(map, 8, 12);
+eq(enc0.encounter.stepsSinceReset, 0, 'encounter counter starts at 0');
+eq(enc0.encounter.triggered, false, 'encounter starts not triggered');
+
+// First 3 steps never trigger, even with a guaranteed "hit" roll
+let grace = enc0;
+grace = Overworld.registerStep(grace, seq([0.0]));
+eq(grace.encounter.triggered, false, 'step 1 in grace period: no encounter');
+eq(grace.encounter.stepsSinceReset, 1, 'step 1 increments the counter');
+grace = Overworld.registerStep(grace, seq([0.0]));
+eq(grace.encounter.triggered, false, 'step 2 in grace period: no encounter');
+grace = Overworld.registerStep(grace, seq([0.0]));
+eq(grace.encounter.triggered, false, 'step 3 in grace period: no encounter');
+eq(grace.encounter.stepsSinceReset, 3, 'counter reads 3 after the grace steps');
+
+// Step 4 with a roll under the rate triggers
+// roll sequence: [trigger roll 0.1, enemy pick roll 0.9] -> 0.1 < 0.15, 0.9 >= 0.5 -> wolf
+const trig = Overworld.registerStep(grace, seq([0.1, 0.9]));
+eq(trig.encounter.triggered, true, 'roll 0.1 under rate on step 4 triggers');
+eq(trig.encounter.lastEnemyId, 'wolf', 'enemy pick roll 0.9 selects wolf');
+eq(trig.encounter.stepsSinceReset, 0, 'counter resets to 0 when an encounter triggers');
+
+// Step 4 with a roll at/above the rate does not trigger
+const noTrig = Overworld.registerStep(grace, seq([0.9, 0.9]));
+eq(noTrig.encounter.triggered, false, 'roll 0.9 above rate does not trigger');
+eq(noTrig.encounter.stepsSinceReset, 4, 'counter keeps counting when no trigger');
+
+// Enemy pick lower half selects goblin: pick roll 0.3 -> 0.3 < 0.5
+const trigGoblin = Overworld.registerStep(grace, seq([0.0, 0.3]));
+eq(trigGoblin.encounter.lastEnemyId, 'goblin', 'enemy pick roll 0.3 selects goblin');
+eq(trigGoblin.encounter.triggered, true, 'roll 0.0 under rate triggers');
+
+// pickEncounterEnemy 50/50 split
+eq(Overworld.pickEncounterEnemy(seq([0.49])), 'goblin', 'pick roll just under 0.5 -> goblin');
+eq(Overworld.pickEncounterEnemy(seq([0.5])), 'wolf', 'pick roll at 0.5 -> wolf');
+
+// Counter resets after a battle: next 3 steps safe, 4th can trigger again
+let post = Overworld.resetEncounterCounter(trig);
+eq(post.encounter.stepsSinceReset, 0, 'resetEncounterCounter zeroes the counter');
+eq(post.encounter.triggered, false, 'resetEncounterCounter clears the trigger flag');
+post = Overworld.registerStep(post, seq([0.0]));
+post = Overworld.registerStep(post, seq([0.0]));
+post = Overworld.registerStep(post, seq([0.0]));
+eq(post.encounter.triggered, false, 'after battle reset: grace steps do not trigger');
+post = Overworld.registerStep(post, seq([0.05, 0.2]));
+eq(post.encounter.triggered, true, 'after battle reset: 4th step can trigger again');
+
+// Blocked moves do not register steps: the movement state machine leaves the
+// encounter counter untouched when a move is blocked or in flight.
+const blockedState = Overworld.attemptMove(
+  Overworld.createPlayerState(map, 8, 13), 'down', 16); // tree border below
+eq(blockedState.encounter.stepsSinceReset, 0, 'blocked move does not register a step');
+const steppedState = Overworld.attemptMove(enc0, 'down', 60); // step in flight
+eq(steppedState.encounter.stepsSinceReset, 0, 'mid-step (not landed) does not register a step');
+
+// registerStep is pure: input state is never mutated
+const beforeEnc = JSON.stringify(trig);
+Overworld.registerStep(trig, seq([0.0, 0.0]));
+Overworld.resetEncounterCounter(trig);
+eq(JSON.stringify(trig), beforeEnc, 'registerStep/resetEncounterCounter never mutate input');
+
+// registerStep works without an injected rng (defaults to Math.random)
+let threw = false;
+try { Overworld.registerStep(enc0); } catch (e) { threw = true; }
+ok(!threw, 'registerStep runs without an injected rng');
+
+// ---- NPCs and dialogue (Phase 11 Segment 4) --------------------------------
+console.log('\n== Phase 11: NPCs and dialogue ==');
+
+eq(Overworld.NPCS.length, 2, 'two NPCs are defined on the map');
+eq(Overworld.NPCS[0].id, 'villager', 'first NPC is the villager');
+eq(Overworld.NPCS[1].id, 'guard', 'second NPC is the guard');
+ok(Overworld.NPCS[0].dialogue.length >= 2 && Overworld.NPCS[1].dialogue.length >= 2,
+  'each NPC carries a multi-line dialogue');
+eq(Overworld.isWalkableTile(map, Overworld.NPCS[0].x, Overworld.NPCS[0].y), true,
+  'villager stands on walkable terrain');
+eq(Overworld.isWalkableTile(map, Overworld.NPCS[1].x, Overworld.NPCS[1].y), true,
+  'guard stands on walkable terrain');
+
+// Walking into an NPC tile is blocked (villager at 9,9)
+const npcBlocked = Overworld.attemptMove(
+  Overworld.createPlayerState(map, 8, 9), 'right', 16);
+eq(npcBlocked.x, 8, 'move into the villager tile is blocked (x stays)');
+eq(npcBlocked.y, 9, 'move into the villager tile is blocked (y stays)');
+eq(npcBlocked.moving.active, false, 'blocked NPC move starts no step');
+eq(npcBlocked.facing, 'right', 'facing updates even when an NPC blocks the move');
+
+const guardBlocked = Overworld.attemptMove(
+  Overworld.createPlayerState(map, 11, 4), 'down', 16);
+eq(guardBlocked.moving.active, false, 'move into the guard tile is blocked');
+
+// getFacingNpc: correct NPC for each direction, null when none
+const facingVillager = Overworld.createPlayerState(map, 8, 9, 'right');
+eq(Overworld.getFacingNpc(map, Overworld.NPCS, facingVillager).id, 'villager',
+  'facing right toward the villager returns the villager');
+const facingLeftNothing = Overworld.createPlayerState(map, 8, 9, 'left');
+eq(Overworld.getFacingNpc(map, Overworld.NPCS, facingLeftNothing), null,
+  'facing left with no NPC there returns null');
+const facingGuardFromPath = Overworld.createPlayerState(map, 11, 4, 'down');
+eq(Overworld.getFacingNpc(map, Overworld.NPCS, facingGuardFromPath).id, 'guard',
+  'facing down toward the guard returns the guard');
+const facingGuardFromBelow = Overworld.createPlayerState(map, 11, 6, 'up');
+eq(Overworld.getFacingNpc(map, Overworld.NPCS, facingGuardFromBelow).id, 'guard',
+  'facing up toward the guard returns the guard');
+const facingNothing = Overworld.createPlayerState(map, 3, 8, 'down');
+eq(Overworld.getFacingNpc(map, Overworld.NPCS, facingNothing), null,
+  'facing open grass returns null');
+
+// Dialogue state machine: start, advance line by line, end after the last line
+const villager = Overworld.NPCS[0];
+const d0 = Overworld.startDialogue(villager);
+eq(d0.npcId, 'villager', 'dialogue tracks the NPC id');
+eq(d0.index, 0, 'dialogue starts at line 0');
+eq(d0.open, true, 'dialogue starts open');
+const d1 = Overworld.advanceDialogue(d0);
+eq(d1.index, 1, 'first advance moves to line 1');
+eq(d1.open, true, 'dialogue stays open mid-lines');
+const dLast = Overworld.advanceDialogue(d1);
+eq(dLast.index, 2, 'second advance reaches the last line');
+eq(dLast.open, true, 'dialogue is still open on the last line');
+const dEnd = Overworld.advanceDialogue(dLast);
+eq(dEnd.open, false, 'advancing off the last line ends the dialogue');
+const dPast = Overworld.advanceDialogue(dEnd);
+eq(dPast.open, false, 'dialogue cannot advance past the end');
+eq(dPast.index, dEnd.index, 'index does not change once the dialogue ended');
+const dForced = Overworld.endDialogue(d0);
+eq(dForced.open, false, 'endDialogue closes an open dialogue early');
+
+// Purity: dialogue functions never mutate their input
+const beforeDlg = JSON.stringify(dLast);
+Overworld.advanceDialogue(dLast);
+Overworld.endDialogue(dLast);
+eq(JSON.stringify(dLast), beforeDlg, 'advanceDialogue/endDialogue never mutate input');
+
+// Player state carries the NPC list and it survives movement cloning
+eq(Overworld.createPlayerState(map, 8, 12).npcs.length, 2,
+  'player state carries the default NPC list');
+const npcCarry = Overworld.attemptMove(Overworld.createPlayerState(map, 8, 12), 'down', 16);
+eq(npcCarry.npcs.length, 2, 'NPC list is preserved across attemptMove');
+
 // ---- Result ------------------------------------------------------------------
 console.log('\n----------------------------------------');
 console.log('RESULT: ' + passed + ' passed, ' + failed + ' failed');
