@@ -4,10 +4,78 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FantasyQuest</title>
-    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-    <canvas id="gameCanvas"></canvas>
-    <script src="js/main.js"></script>
+    <div id="game-shell">
+        <div class="frame">
+            <canvas id="game-canvas" width="800" height="450"></canvas>
+
+            <!-- CRT scanline overlay (toggle with the CRT button or press S) -->
+            <div class="scanlines" id="scanlines"></div>
+
+            <!-- Intro screen overlay -->
+            <div class="intro-screen" id="intro-screen">
+                <h1 class="game-title">FantasyQuest</h1>
+                <p class="subtitle">A 16-BIT RETRO ADVENTURE</p>
+
+                <div class="dialogue-box" id="dialogue-box">
+                    <div class="portrait-frame">
+                        <img src="assets/portraits/hero_neutral.png" alt="Hero portrait" class="portrait">
+                    </div>
+                    <div class="dialogue-text">
+                        <p class="speaker">HERO</p>
+                        <p class="line">The journey begins...</p>
+                    </div>
+                </div>
+
+                <p class="hint">PRESS ANY KEY TO CONTINUE</p>
+            </div>
+        </div>
+
+        <div class="controls">
+            <button type="button" id="crt-toggle" class="btn" aria-pressed="true">CRT: ON</button>
+        </div>
+    </div>
+
+    <script>
+        (function () {
+            'use strict';
+
+            var canvas = document.getElementById('game-canvas');
+            var ctx = canvas.getContext('2d');
+            ctx.imageSmoothingEnabled = false;
+
+            var shell = document.getElementById('game-shell');
+            var scanlines = document.getElementById('scanlines');
+            var crtToggle = document.getElementById('crt-toggle');
+            var background = new Image();
+            background.src = 'assets/backgrounds/forest_battle.png';
+
+            background.onload = function () {
+                ctx.drawImage(background, 0, 0, canvas.width, canvas.height);
+            };
+
+            // Draw a dimmed backdrop so the intro text stays readable
+            ctx.fillStyle = 'rgba(8, 6, 16, 0.45)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            function setCrt(on) {
+                shell.classList.toggle('crt-off', !on);
+                crtToggle.textContent = on ? 'CRT: ON' : 'CRT: OFF';
+                crtToggle.setAttribute('aria-pressed', on ? 'true' : 'false');
+            }
+
+            crtToggle.addEventListener('click', function () {
+                setCrt(shell.classList.contains('crt-off'));
+            });
+
+            document.addEventListener('keydown', function (event) {
+                if (event.key === 's' || event.key === 'S') {
+                    setCrt(shell.classList.contains('crt-off'));
+                }
+            });
+        })();
+    </script>
 </body>
 </html>

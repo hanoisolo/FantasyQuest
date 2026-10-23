@@ -1,0 +1,15 @@
+# Environment / secrets
+.env
+*.env
+*.pem
+*.key
+
+# Local agent / IDE state
+.vibe/
+
+# Dependencies
+node_modules/
+__pycache__/
+
+# Logs
+*.log
