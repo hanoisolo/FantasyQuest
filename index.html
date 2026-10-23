@@ -14,22 +14,79 @@
             <!-- CRT scanline overlay (toggle with the CRT button or press S) -->
             <div class="scanlines" id="scanlines"></div>
 
-            <!-- Intro screen overlay -->
-            <div class="intro-screen" id="intro-screen">
-                <h1 class="game-title">FantasyQuest</h1>
-                <p class="subtitle">A 16-BIT RETRO ADVENTURE</p>
+            <!-- Screen transition flash -->
+            <div id="screen-flash"></div>
 
-                <div class="dialogue-box" id="dialogue-box">
-                    <div class="portrait-frame">
-                        <img src="assets/portraits/hero_neutral.png" alt="Hero portrait" class="portrait">
+            <!-- ===================== TITLE SCENE ===================== -->
+            <div class="scene active" id="scene-title">
+                <div class="intro-screen" id="intro-screen">
+                    <h1 class="game-title">FantasyQuest</h1>
+                    <p class="subtitle">A 16-BIT RETRO ADVENTURE</p>
+
+                    <div class="dialogue-box" id="dialogue-box">
+                        <div class="portrait-frame">
+                            <img src="assets/portraits/hero_neutral.png" alt="Hero portrait" class="portrait">
+                        </div>
+                        <div class="dialogue-text">
+                            <p class="speaker">HERO</p>
+                            <p class="line">The journey begins...</p>
+                        </div>
                     </div>
-                    <div class="dialogue-text">
-                        <p class="speaker">HERO</p>
-                        <p class="line">The journey begins...</p>
+
+                    <p class="hint" id="title-hint">CLICK / TAP OR PRESS SPACE / ENTER TO CONTINUE</p>
+                </div>
+            </div>
+
+            <!-- ===================== BATTLE SCENE ===================== -->
+            <div class="scene" id="scene-battle">
+                <div class="battle-arena" id="battle-arena">
+                    <div class="enemy-row" id="enemy-row"></div>
+
+                    <div class="hero-unit" id="hero-unit">
+                        <img src="assets/portraits/hero_battle.png" alt="Hero battle bust" class="hero-bust">
+                        <div class="hero-plates">
+                            <div class="turn-indicator" id="turn-indicator">&#9654; TURN</div>
+                            <div class="stat-label">HERO</div>
+                            <div class="bar hp"><div class="bar-fill" id="hero-hp-fill"></div><span class="bar-text" id="hero-hp-text">120/120</span></div>
+                            <div class="bar mp"><div class="bar-fill mp-fill" id="hero-mp-fill"></div><span class="bar-text" id="hero-mp-text">45/45</span></div>
+                        </div>
+                    </div>
+
+                    <div class="battle-log"><span id="battle-message">The forest stirs...</span></div>
+
+                    <div class="command-menu" id="command-menu">
+                        <button type="button" class="btn cmd" id="cmd-attack">ATTACK</button>
+                        <button type="button" class="btn cmd" id="cmd-magic">MAGIC</button>
+                        <button type="button" class="btn cmd" id="cmd-item">ITEM</button>
+                        <button type="button" class="btn cmd" id="cmd-defend">DEFEND</button>
+                    </div>
+
+                    <div class="item-panel hidden" id="item-panel">
+                        <img src="assets/items/relic_crystal.png" alt="Arcane Crystal relic" class="item-icon">
+                        <div class="item-desc">
+                            <p class="item-name">ARCANE CRYSTAL</p>
+                            <p class="item-effect">Restores 50 HP</p>
+                        </div>
+                        <div class="item-actions">
+                            <button type="button" class="btn" id="item-use">USE</button>
+                            <button type="button" class="btn" id="item-cancel">CANCEL</button>
+                        </div>
+                    </div>
+
+                    <!-- Victory banner -->
+                    <div class="result-overlay hidden" id="victory-screen">
+                        <h2 class="result-title victory">VICTORY!</h2>
+                        <p class="result-line">+45 EXP and +30 Gold</p>
+                        <button type="button" class="btn" id="victory-again">PLAY AGAIN</button>
+                    </div>
+
+                    <!-- Game over banner -->
+                    <div class="result-overlay hidden" id="defeat-screen">
+                        <h2 class="result-title defeat">DEFEATED</h2>
+                        <p class="result-line">The forest claims another wanderer...</p>
+                        <button type="button" class="btn" id="defeat-retry">RETRY BATTLE</button>
                     </div>
                 </div>
-
-                <p class="hint">PRESS ANY KEY TO CONTINUE</p>
             </div>
         </div>
 
@@ -38,27 +95,25 @@
         </div>
     </div>
 
+    <script src="audio.js"></script>
+    <script src="battle.js"></script>
     <script>
         (function () {
             'use strict';
 
             var canvas = document.getElementById('game-canvas');
-            var ctx = canvas.getContext('2d');
-            ctx.imageSmoothingEnabled = false;
+            var ctx = canvas.getContext && canvas.getContext('2d');
+            if (ctx) {
+                ctx.imageSmoothingEnabled = false;
+                var background = new Image();
+                background.src = 'assets/backgrounds/forest_battle.png';
+                background.onload = function () {
+                    ctx.drawImage(background, 0, 0, canvas.width, canvas.height);
+                };
+            }
 
             var shell = document.getElementById('game-shell');
-            var scanlines = document.getElementById('scanlines');
             var crtToggle = document.getElementById('crt-toggle');
-            var background = new Image();
-            background.src = 'assets/backgrounds/forest_battle.png';
-
-            background.onload = function () {
-                ctx.drawImage(background, 0, 0, canvas.width, canvas.height);
-            };
-
-            // Draw a dimmed backdrop so the intro text stays readable
-            ctx.fillStyle = 'rgba(8, 6, 16, 0.45)';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
 
             function setCrt(on) {
                 shell.classList.toggle('crt-off', !on);
@@ -73,6 +128,72 @@
             document.addEventListener('keydown', function (event) {
                 if (event.key === 's' || event.key === 'S') {
                     setCrt(shell.classList.contains('crt-off'));
+                }
+            });
+
+            /* ---------------- Scene Manager ---------------- */
+            var Scene = (function () {
+                var current = 'title';
+                var flash = document.getElementById('screen-flash');
+
+                function show(name) {
+                    current = name;
+                    var scenes = document.querySelectorAll('.scene');
+                    for (var i = 0; i < scenes.length; i++) {
+                        scenes[i].classList.toggle('active', scenes[i].id === 'scene-' + name);
+                    }
+                }
+
+                function transition(name) {
+                    if (flash) {
+                        flash.classList.remove('go');
+                        // Force a reflow so the animation can restart.
+                        void flash.offsetWidth;
+                        flash.classList.add('go');
+                        window.setTimeout(function () {
+                            flash.classList.remove('go');
+                        }, 260);
+                    }
+                    window.setTimeout(function () {
+                        show(name);
+                        if (name === 'battle' && window.Battle) {
+                            window.Battle.init();
+                        }
+                    }, 130);
+                }
+
+                return {
+                    show: show,
+                    transition: transition,
+                    name: function () { return current; }
+                };
+            })();
+
+            /* -------- Title screen input: click / touch / Space / Enter -------- */
+            var titleScene = document.getElementById('scene-title');
+            var titleHandled = false;
+
+            function startGame() {
+                if (Scene.name() !== 'title' || titleHandled) {
+                    return;
+                }
+                titleHandled = true;
+                if (window.RetroAudio) {
+                    RetroAudio.beep();
+                }
+                Scene.transition('battle');
+                titleScene.removeEventListener('click', startGame);
+                titleScene.removeEventListener('touchstart', startGame);
+            }
+
+            titleScene.addEventListener('click', startGame);
+            titleScene.addEventListener('touchstart', startGame, { passive: true });
+            document.addEventListener('keydown', function (event) {
+                if (Scene.name() === 'title' &&
+                    (event.key === ' ' || event.key === 'Enter' ||
+                     event.code === 'Space' || event.code === 'Enter' || event.code === 'NumpadEnter')) {
+                    event.preventDefault();
+                    startGame();
                 }
             });
         })();
