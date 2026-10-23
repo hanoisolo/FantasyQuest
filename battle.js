@@ -21,7 +21,6 @@ var Battle = (function () {
         ],
         magic: { name: 'Arcane Spark', cost: 10, damage: 20 },
         item: { name: 'Arcane Crystal', heal: 50 },
-        rewards: { exp: 0, gold: 0 },
         enemyTurnDelayMs: 800,
         enemyStrikeGapMs: 600
     };
@@ -148,7 +147,8 @@ var Battle = (function () {
         return Math.max(0, Math.min(100, (value / max) * 100)) + '%';
     }
 
-    // Pixel-art SVG silhouettes with glowing red eyes (no sprites shipped yet).
+    // Pixel-art SVG silhouettes with glowing red eyes.
+    // Served as fallback art when an enemy sprite image fails to load.
     function silhouetteSVG(kind) {
         var eyes = '<circle class="eye" cx="16" cy="18" r="2.2"/><circle class="eye" cx="24" cy="18" r="2.2"/>';
         var body = '';
@@ -173,11 +173,39 @@ var Battle = (function () {
         unit.className = 'enemy-unit';
         unit.setAttribute('data-index', String(index));
         unit.setAttribute('data-enemy-id', cfg.id);
-        unit.innerHTML =
-            silhouetteSVG(cfg.art) +
-            '<div class="enemy-name">' + cfg.name + '</div>' +
-            '<div class="bar hp"><div class="bar-fill"></div></div>' +
-            '<div class="bar-label"></div>';
+
+        // Sprite layer: shows assets/sprites/<id>_battle.png, and falls back
+        // to the styled silhouette if the image fails to load.
+        var art = document.createElement('div');
+        art.className = 'enemy-art';
+        art.innerHTML = silhouetteSVG(cfg.art);
+
+        var sprite = document.createElement('img');
+        sprite.className = 'enemy-sprite';
+        sprite.alt = cfg.name;
+        sprite.src = 'assets/sprites/' + cfg.id + '_battle.png';
+        sprite.addEventListener('error', function () {
+            art.classList.add('sprite-failed');
+        });
+        art.appendChild(sprite);
+        unit.appendChild(art);
+
+        var nameEl = document.createElement('div');
+        nameEl.className = 'enemy-name';
+        nameEl.textContent = cfg.name;
+        unit.appendChild(nameEl);
+
+        var bar = document.createElement('div');
+        bar.className = 'bar hp';
+        var fill = document.createElement('div');
+        fill.className = 'bar-fill';
+        bar.appendChild(fill);
+        unit.appendChild(bar);
+
+        var label = document.createElement('div');
+        label.className = 'bar-label';
+        unit.appendChild(label);
+
         unit.addEventListener('click', function () {
             onEnemyClicked(index);
         });

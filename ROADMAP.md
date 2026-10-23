@@ -64,7 +64,9 @@ Create "warp tiles" (e.g., yellow squares) that trigger the map swap and reposit
 
 
 
-Phase 14: Advanced Combat Mechanics
+Phase 14: Advanced Combat Mechanics [DONE]
+
+Status note: MP, the MAGIC command, and multi-enemy targeting already shipped in the master battle engine (battle.js).
 
 
 
@@ -96,7 +98,9 @@ Add a 'Load Game' option to the initial boot screen.
 
 
 
-Phase 16: Visual Polish (Sprite Integration)
+Phase 16: Visual Polish (Sprite Integration) [PARTIAL]
+
+Status note: enemy battle sprites (goblin_battle.png, wolf_battle.png) are integrated into the battle scene with a silhouette fallback. Player and map tile sprites are deferred until the overworld exists.
 
 
 
@@ -104,7 +108,9 @@ Replace the colored canvas rectangles with actual 16x16 pixel art sprites (.png 
 
 
 
-Phase 17: Audio Integration
+Phase 17: Audio Integration [DONE]
+
+Status note: audio.js already covers attack and menu SFX via the Web Audio synthesizer (slash, cursor beep, magic sparkle, heal chime, victory fanfare, defeat sting).
 
 
 
