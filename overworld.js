@@ -92,6 +92,17 @@ var Overworld = (function () {
                 'Shadow wolves drink here at dusk. Stay sharp.',
                 'Move along the path, and keep your blade ready.'
             ]
+        },
+        {
+            id: 'merchant',
+            name: 'Merchant',
+            x: 6,   // grass two tiles west of the path
+            y: 9,
+            shop: true, // opens the potion shop on interaction
+            dialogue: [
+                'Psst! Potions, fresh from the pond road...',
+                'Only 15 gold each. Care to browse my wares?'
+            ]
         }
     ];
 
@@ -368,6 +379,78 @@ var Overworld = (function () {
         return next;
     }
 
+    // ------------------------------------------------------------------
+    // Shop (Phase 12) — pure state machine for the Merchant
+    // ------------------------------------------------------------------
+
+    function cloneShop(shop) {
+        return {
+            open: shop.open,
+            merchantId: shop.merchantId,
+            lastMessage: shop.lastMessage
+        };
+    }
+
+    /*
+     * openShop(npc) -> shop state. The scene layer opens this after the
+     * merchant's dialogue line; menu entries are "Buy Potion - <price> G"
+     * and "Leave".
+     */
+    function openShop(npc) {
+        var P = getProgression();
+        var price = P && typeof P.POTION_PRICE === 'number' ? P.POTION_PRICE : 15;
+        return {
+            open: true,
+            merchantId: npc ? npc.id : null,
+            lastMessage: 'Welcome! Potions are ' + price + ' gold.'
+        };
+    }
+
+    function getProgression() {
+        if (typeof window !== 'undefined' && window.Progression) {
+            return window.Progression;
+        }
+        if (typeof Progression !== 'undefined') {
+            return Progression;
+        }
+        return null;
+    }
+
+    /*
+     * shopBuy(shop, profile) -> new shop state; the shop stays open for
+     * another purchase on both success and failure. Buying routes through
+     * Progression.buyPotion, which updates profile.gold/potions in place
+     * on success and leaves them untouched on failure.
+     */
+    function shopBuy(shop, profile) {
+        var next = cloneShop(shop);
+        if (!next.open) {
+            return next; // nothing for sale once the shop is closed
+        }
+        var P = getProgression();
+        if (!P || typeof P.buyPotion !== 'function') {
+            next.lastMessage = 'The shelves are empty today...';
+            return next;
+        }
+        if (P.buyPotion(profile)) {
+            next.lastMessage = 'Potion purchased! Anything else?';
+        } else {
+            next.lastMessage = 'Not enough gold!';
+        }
+        return next;
+    }
+
+    /*
+     * shopLeave(shop) -> closed shop state. The scene layer restores
+     * exploration control (movement and encounters) when this returns.
+     */
+    function shopLeave(shop) {
+        var next = cloneShop(shop);
+        next.open = false;
+        next.lastMessage = '';
+        return next;
+    }
+
     return {
         TILE: TILE,
         MOVE_DURATION_MS: MOVE_DURATION_MS,
@@ -386,6 +469,9 @@ var Overworld = (function () {
         getFacingNpc: getFacingNpc,
         startDialogue: startDialogue,
         advanceDialogue: advanceDialogue,
-        endDialogue: endDialogue
+        endDialogue: endDialogue,
+        openShop: openShop,
+        shopBuy: shopBuy,
+        shopLeave: shopLeave
     };
 })();

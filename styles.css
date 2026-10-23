@@ -797,6 +797,10 @@ canvas#game-canvas {
     background: #7a7f8a;
 }
 
+.npc-merchant {
+    background: #7a3ea8;
+}
+
 /* --- Overworld dialogue box (retro style, bottom of the map) --- */
 
 .overworld-dialogue {
@@ -830,4 +834,74 @@ canvas#game-canvas {
     letter-spacing: 0.06em;
     color: var(--ink);
     text-shadow: 1px 1px 0 #000;
+}
+
+/* --- Overworld HUD (Phase 12): persistent HP, potions, gold --- */
+
+#overworld-hud {
+    position: absolute;
+    top: 4%;
+    left: 4%;
+    z-index: 10;
+    display: flex;
+    gap: 16px;
+    padding: 6px 12px;
+    background: var(--panel);
+    border: 3px solid var(--panel-edge);
+    outline: 3px solid var(--panel-edge-dark);
+    box-shadow: inset 0 0 0 2px #000;
+    font-size: clamp(9px, 1.4vw, 12px);
+    letter-spacing: 0.15em;
+    color: var(--ink);
+    text-shadow: 1px 1px 0 #000;
+}
+
+#hud-hp {
+    color: #63d64a;
+}
+
+#hud-potions {
+    color: #7ec8ff;
+}
+
+#hud-gold {
+    color: #ffd76a;
+}
+
+/* --- Merchant shop menu (Phase 12): dialogue-box aesthetic --- */
+
+.overworld-shop {
+    position: absolute;
+    left: 50%;
+    bottom: 4%;
+    transform: translateX(-50%);
+    z-index: 11;
+    width: min(92%, 560px);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 14px;
+    background: var(--panel);
+    border: 3px solid var(--panel-edge);
+    outline: 3px solid var(--panel-edge-dark);
+    box-shadow: inset 0 0 0 2px #000, 0 10px 24px var(--shadow);
+}
+
+.shop-entries {
+    display: flex;
+    gap: 8px;
+}
+
+.shop-entry {
+    flex: 1;
+    font-size: clamp(10px, 1.6vw, 13px);
+}
+
+.shop-message {
+    margin: 0;
+    font-size: clamp(10px, 1.5vw, 12px);
+    letter-spacing: 0.08em;
+    color: var(--dim);
+    text-shadow: 1px 1px 0 #000;
+    min-height: 1.2em;
 }

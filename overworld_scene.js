@@ -167,6 +167,7 @@ var OverworldScene = (function () {
             U.hero.classList.remove(FACING_CLASSES[i]);
         }
         U.hero.classList.add('facing-' + p.facing);
+        updateHud(); // keeps persistent HP/potions/gold visible while exploring
     }
 
     // ------------------------------------------------------------------
@@ -226,6 +227,39 @@ var OverworldScene = (function () {
     // Interaction and dialogue
     // ------------------------------------------------------------------
 
+    function findNpc(id) {
+        if (!U) {
+            return null;
+        }
+        for (var i = 0; i < U.npcs.length; i++) {
+            if (U.npcs[i].id === id) {
+                return U.npcs[i];
+            }
+        }
+        return null;
+    }
+
+    // The live hero profile (gold, potions, hp) shared with the battle engine.
+    function getHeroProfile() {
+        if (window.Battle && window.Battle.getProfile) {
+            return window.Battle.getProfile();
+        }
+        return null;
+    }
+
+    function updateHud() {
+        if (!U || !U.hudHp) {
+            return;
+        }
+        var p = getHeroProfile();
+        if (!p) {
+            return;
+        }
+        U.hudHp.textContent = 'HP ' + p.hp + '/' + p.maxHp;
+        U.hudPotions.textContent = 'POT ' + p.potions;
+        U.hudGold.textContent = p.gold + ' G';
+    }
+
     function renderDialogue() {
         if (!U || !U.dialogue || !U.dialogueBox) {
             return;
@@ -246,10 +280,81 @@ var OverworldScene = (function () {
         }
     }
 
+    // --- Shop menu (Phase 12) ---
+
+    function showShop() {
+        if (U.shopBox) {
+            U.shopBox.classList.remove('hidden');
+        }
+    }
+
+    function hideShop() {
+        if (U.shopBox) {
+            U.shopBox.classList.add('hidden');
+        }
+    }
+
+    function renderShop() {
+        if (!U || !U.shop || !U.shopBox) {
+            return;
+        }
+        var P = window.Progression;
+        var price = P && typeof P.POTION_PRICE === 'number' ? P.POTION_PRICE : 15;
+        U.shopBuyBtn.textContent = 'BUY POTION - ' + price + ' G';
+        U.shopMessage.textContent = U.shop.lastMessage;
+    }
+
+    function openShopMenu(npc) {
+        U.shop = window.Overworld.openShop(npc);
+        renderShop();
+        showShop();
+        if (window.RetroAudio) {
+            RetroAudio.beep();
+        }
+    }
+
+    function buyFromShop() {
+        if (!U || !U.shop || !U.shop.open) {
+            return;
+        }
+        var profile = getHeroProfile();
+        if (!profile) {
+            return;
+        }
+        var goldBefore = profile.gold;
+        U.shop = window.Overworld.shopBuy(U.shop, profile);
+        if (profile.gold < goldBefore) {
+            if (window.RetroAudio) {
+                RetroAudio.buy(); // shop purchase chime
+            }
+        } else if (window.RetroAudio) {
+            RetroAudio.beep(); // failed purchase
+        }
+        renderShop();
+        updateHud(); // gold and potion count change on every purchase
+    }
+
+    function closeShop() {
+        if (!U || !U.shop) {
+            return;
+        }
+        U.shop = window.Overworld.shopLeave(U.shop);
+        U.shop = null;
+        hideShop();
+        if (window.RetroAudio) {
+            RetroAudio.beep();
+        }
+    }
+
     // E / Space / Enter: open a dialogue with the faced NPC, advance the
-    // current line, or close the box after the last line.
+    // current line, or close the box after the last line. Shop NPCs open
+    // their shop menu after the last dialogue line.
     function handleInteraction() {
         if (!U || U.paused) {
+            return;
+        }
+        if (U.shop) {
+            closeShop(); // interaction key acts as LEAVE while shopping
             return;
         }
         if (U.dialogue) {
@@ -257,9 +362,14 @@ var OverworldScene = (function () {
             if (U.dialogue.open) {
                 renderDialogue();
             } else {
+                var npcId = U.dialogue.npcId;
                 U.dialogue = window.Overworld.endDialogue(U.dialogue);
                 U.dialogue = null;
                 hideDialogue(); // movement input resumes
+                var npc = findNpc(npcId);
+                if (npc && npc.shop) {
+                    openShopMenu(npc); // dialogue done -> shop menu
+                }
             }
             return;
         }
@@ -280,6 +390,14 @@ var OverworldScene = (function () {
             return;
         }
         wired = true;
+        var shopBuyBtn = document.getElementById('shop-buy');
+        var shopLeaveBtn = document.getElementById('shop-leave');
+        if (shopBuyBtn) {
+            shopBuyBtn.addEventListener('click', buyFromShop);
+        }
+        if (shopLeaveBtn) {
+            shopLeaveBtn.addEventListener('click', closeShop);
+        }
         document.addEventListener('keydown', function (event) {
             if (!U || U.paused) {
                 return; // no input before init or while a battle is running
@@ -300,8 +418,8 @@ var OverworldScene = (function () {
             if (ARROW_KEYS.indexOf(event.key) !== -1) {
                 event.preventDefault();
             }
-            // Movement input is locked while dialogue is open.
-            if (U.dialogue) {
+            // Movement input is locked while dialogue or the shop is open.
+            if (U.dialogue || U.shop) {
                 return;
             }
             // Input is ignored while a step animation is in progress.
@@ -389,6 +507,13 @@ var OverworldScene = (function () {
             player: player,
             dialogue: null,
             dialogueBox: dialogueBox,
+            shop: null,
+            shopBox: document.getElementById('overworld-shop'),
+            shopBuyBtn: document.getElementById('shop-buy'),
+            shopMessage: document.getElementById('shop-message'),
+            hudHp: document.getElementById('hud-hp'),
+            hudPotions: document.getElementById('hud-potions'),
+            hudGold: document.getElementById('hud-gold'),
             paused: false,
             inEncounter: false
         };

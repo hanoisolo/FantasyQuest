@@ -93,6 +93,23 @@
             <!-- ===================== OVERWORLD SCENE ===================== -->
             <div class="scene" id="scene-overworld">
                 <div id="overworld-container"></div>
+
+                <!-- Hero HUD: persistent HP, potions, gold (Phase 12) -->
+                <div id="overworld-hud">
+                    <span id="hud-hp">HP 120/120</span>
+                    <span id="hud-potions">POT 1</span>
+                    <span id="hud-gold">0 G</span>
+                </div>
+
+                <!-- Merchant shop menu (Phase 12) -->
+                <div id="overworld-shop" class="overworld-shop hidden">
+                    <p class="npc-name">MERCHANT</p>
+                    <div class="shop-entries">
+                        <button type="button" class="btn shop-entry" id="shop-buy">BUY POTION - 15 G</button>
+                        <button type="button" class="btn shop-entry" id="shop-leave">LEAVE</button>
+                    </div>
+                    <p class="shop-message" id="shop-message"></p>
+                </div>
             </div>
         </div>
 

@@ -278,6 +278,108 @@ eq(s.heroGold, 60, 'second victory: 30 + 30 = 60 gold total');
 eq(s.heroLevel, 3, '90 EXP triggers level-up to Lv3');
 eq(s.heroMaxHp, 130, 'Lv3 maxHp = 130 (125 + 5)');
 
+// =====================================================================
+console.log('\n== Phase 12: Shop potions and persistent vitals ==');
+
+eq(Progression.POTION_HEAL, 30, 'POTION_HEAL constant is 30');
+eq(Progression.POTION_PRICE, 15, 'POTION_PRICE constant is 15');
+eq(Progression.STARTING_POTIONS, 1, 'STARTING_POTIONS constant is 1');
+ok(typeof Progression.initProfileVitals === 'function', 'Progression.initProfileVitals() exists');
+ok(typeof Progression.buyPotion === 'function', 'Progression.buyPotion() exists');
+ok(typeof Progression.usePotion === 'function', 'Progression.usePotion() exists');
+
+// initProfileVitals: extends a fresh profile with hp and potions
+{
+  const p = { level: 1, experience: 0, gold: 0, maxHp: 120, attackDamage: 28 };
+  Progression.initProfileVitals(p);
+  eq(p.hp, 120, 'initProfileVitals: hp starts at maxHp');
+  eq(p.potions, 1, 'initProfileVitals: potions start at 1');
+  // Idempotent: a damaged profile keeps its hp on re-init (persists across battles)
+  p.hp = 90;
+  p.potions = 0;
+  Progression.initProfileVitals(p);
+  eq(p.hp, 90, 'initProfileVitals is idempotent: existing hp is never reset');
+  eq(p.potions, 0, 'initProfileVitals is idempotent: existing potions are never reset');
+}
+
+// buyPotion: success (exact price boundary gold === 15)
+{
+  const p = { gold: 15, potions: 1 };
+  const res = Progression.buyPotion(p);
+  eq(res, true, 'buyPotion with exactly 15 gold succeeds');
+  eq(p.gold, 0, 'buyPotion subtracts the 15 gold price');
+  eq(p.potions, 2, 'buyPotion adds one potion');
+}
+
+// buyPotion: success with gold to spare, repeated purchases
+{
+  const p = { gold: 45, potions: 0 };
+  eq(Progression.buyPotion(p), true, 'first of three purchases succeeds');
+  eq(Progression.buyPotion(p), true, 'second purchase succeeds');
+  eq(Progression.buyPotion(p), true, 'third purchase succeeds');
+  eq(p.gold, 0, 'three purchases cost 45 gold total');
+  eq(p.potions, 3, 'three purchases add three potions');
+}
+
+// buyPotion: insufficient gold leaves the state untouched
+{
+  const p = { gold: 14, potions: 2 };
+  const res = Progression.buyPotion(p);
+  eq(res, false, 'buyPotion with 14 gold returns false');
+  eq(p.gold, 14, 'failed purchase keeps gold untouched');
+  eq(p.potions, 2, 'failed purchase keeps potions untouched');
+}
+
+// buyPotion: gold at zero
+{
+  const p = { gold: 0, potions: 1 };
+  eq(Progression.buyPotion(p), false, 'buyPotion with 0 gold returns false');
+  eq(p.potions, 1, 'failed purchase at 0 gold keeps potions');
+}
+
+// usePotion: success without clamping
+{
+  const p = { hp: 60, maxHp: 125, potions: 2 };
+  const res = Progression.usePotion(p);
+  eq(res, true, 'usePotion with potions and missing HP succeeds');
+  eq(p.hp, 90, 'usePotion restores 30 HP (60 -> 90)');
+  eq(p.potions, 1, 'usePotion consumes one potion');
+}
+
+// usePotion: healing clamps to maxHp
+{
+  const p = { hp: 100, maxHp: 125, potions: 1 };
+  const res = Progression.usePotion(p);
+  eq(res, true, 'usePotion near full HP still succeeds');
+  eq(p.hp, 125, 'usePotion heals only up to maxHp (100 + 30 clamped to 125)');
+  eq(p.potions, 0, 'clamped heal still consumes the potion');
+}
+
+// usePotion: empty inventory leaves the state untouched
+{
+  const p = { hp: 40, maxHp: 120, potions: 0 };
+  const res = Progression.usePotion(p);
+  eq(res, false, 'usePotion with 0 potions returns false');
+  eq(p.hp, 40, 'failed use keeps hp untouched');
+  eq(p.potions, 0, 'failed use keeps potions at 0');
+}
+
+// usePotion: already at full HP leaves the state untouched
+{
+  const p = { hp: 120, maxHp: 120, potions: 2 };
+  const res = Progression.usePotion(p);
+  eq(res, false, 'usePotion at full HP returns false');
+  eq(p.hp, 120, 'full-HP use keeps hp at maxHp');
+  eq(p.potions, 2, 'full-HP use does not consume a potion');
+}
+
+// Level-up full heal still applies to the persistent hp field
+{
+  const hero = { level: 1, experience: 15, maxHp: 120, hp: 30, attackDamage: 28 };
+  Progression.gainExperience(hero, 10); // 25 EXP -> Lv2
+  eq(hero.hp, 125, 'level-up still fully heals hp to the new maxHp');
+}
+
 console.log('\n----------------------------------------');
 console.log('RESULT: ' + passed + ' passed, ' + failed + ' failed');
 process.exit(failed === 0 ? 0 : 1);

@@ -117,6 +117,20 @@ var RetroAudio = (function () {
             tone({ type: 'triangle', freq: 784, duration: 0.22, gain: 0.16, start: 0.20 });
         },
 
+        // Shop purchase chime — bright ascending coin jingle (Phase 12).
+        buy: function () {
+            tone({ type: 'square', freq: 880, duration: 0.08, gain: 0.14, start: 0.00 });
+            tone({ type: 'triangle', freq: 1318, duration: 0.14, gain: 0.12, start: 0.08 });
+        },
+
+        // Potion drink tone — a low gulp followed by a refreshing chime
+        // (Phase 12, used by the battle ITEM command).
+        drink: function () {
+            tone({ type: 'sine', freq: 300, freqEnd: 180, duration: 0.12, gain: 0.16, start: 0.00 });
+            tone({ type: 'triangle', freq: 520, duration: 0.10, gain: 0.14, start: 0.12 });
+            tone({ type: 'triangle', freq: 700, duration: 0.12, gain: 0.12, start: 0.20 });
+        },
+
         // Victory fanfare — triumphant square-wave arpeggio.
         fanfare: function () {
             var notes = [
