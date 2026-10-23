@@ -89,6 +89,11 @@
                     </div>
                 </div>
             </div>
+
+            <!-- ===================== OVERWORLD SCENE ===================== -->
+            <div class="scene" id="scene-overworld">
+                <div id="overworld-container"></div>
+            </div>
         </div>
 
         <div class="controls">
@@ -99,6 +104,8 @@
     <script src="audio.js"></script>
     <script src="progression.js"></script>
     <script src="battle.js"></script>
+    <script src="overworld.js"></script>
+    <script src="overworld_scene.js"></script>
     <script>
         (function () {
             'use strict';
@@ -161,6 +168,10 @@
                         if (name === 'battle' && window.Battle) {
                             window.Battle.init();
                         }
+                        if (name === 'overworld' && window.OverworldScene) {
+                            window.OverworldScene.initOverworld(
+                                document.getElementById('overworld-container'));
+                        }
                     }, 130);
                 }
 
@@ -183,7 +194,7 @@
                 if (window.RetroAudio) {
                     RetroAudio.beep();
                 }
-                Scene.transition('battle');
+                Scene.transition('overworld');
                 titleScene.removeEventListener('click', startGame);
                 titleScene.removeEventListener('touchstart', startGame);
             }

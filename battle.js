@@ -29,6 +29,10 @@ var Battle = (function () {
     var el = {};  // cached DOM nodes
     var wired = false;
 
+    // Optional encounter filter (Phase 11): when set, only enemies with a
+    // matching id spawn. null spawns the full roster (default behavior).
+    var activeEnemyIds = null;
+
     // Persistent hero profile across battles (Phase 9/10 progression).
     // HP/MP are refilled at the start of each battle; level, EXP, gold,
     // maxHp and attackDamage carry over and grow via level-ups.
@@ -68,7 +72,9 @@ var Battle = (function () {
                 experience: profile.experience,
                 gold: profile.gold
             },
-            enemies: CONFIG.enemies.map(function (e) {
+            enemies: CONFIG.enemies.filter(function (e) {
+                return !activeEnemyIds || activeEnemyIds.indexOf(e.id) !== -1;
+            }).map(function (e) {
                 return { id: e.id, name: e.name, hp: e.maxHp, maxHp: e.maxHp };
             }),
             itemUsed: false,
@@ -433,8 +439,16 @@ var Battle = (function () {
         }
         var enemy = S.enemies[index];
         if (enemy.hp > 0) {
-            var dmg = CONFIG.enemies[index].atkMin +
-                Math.floor(Math.random() * (CONFIG.enemies[index].atkMax - CONFIG.enemies[index].atkMin + 1));
+            // Look up stats by id so filtered encounter rosters stay correct.
+            var cfg = null;
+            for (var c = 0; c < CONFIG.enemies.length; c++) {
+                if (CONFIG.enemies[c].id === enemy.id) {
+                    cfg = CONFIG.enemies[c];
+                    break;
+                }
+            }
+            var dmg = cfg.atkMin +
+                Math.floor(Math.random() * (cfg.atkMax - cfg.atkMin + 1));
             if (S.hero.defending) {
                 dmg = Math.max(1, Math.floor(dmg / 2));
             }
@@ -623,17 +637,26 @@ var Battle = (function () {
     function start() {
         S = freshState();
         el.enemyRow.innerHTML = '';
-        CONFIG.enemies.forEach(function (cfg, i) {
-            el.enemyRow.appendChild(buildEnemyUnit(cfg, i));
-        });
+        CONFIG.enemies
+            .filter(function (e) {
+                return !activeEnemyIds || activeEnemyIds.indexOf(e.id) !== -1;
+            })
+            .forEach(function (cfg, i) {
+                el.enemyRow.appendChild(buildEnemyUnit(cfg, i));
+            });
         toggleItemPanel(false);
         el.victoryScreen.classList.add('hidden');
         el.defeatScreen.classList.add('hidden');
-        say('A Forest Goblin and a Shadow Wolf block the path!');
+        if (activeEnemyIds && S.enemies.length === 1) {
+            say('A wild ' + S.enemies[0].name + ' blocks the path!');
+        } else {
+            say('A Forest Goblin and a Shadow Wolf block the path!');
+        }
         render();
     }
 
-    function init() {
+    function init(enemyId) {
+        activeEnemyIds = enemyId ? [enemyId] : null;
         cacheDom();
         if (!el.arena) {
             return false;

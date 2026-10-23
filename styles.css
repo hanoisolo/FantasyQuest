@@ -683,3 +683,151 @@ canvas#game-canvas {
     margin-top: 8px;
     font-size: clamp(10px, 1.6vw, 13px);
 }
+
+/* ==========================================================================
+   Overworld scene (Phase 11)
+   ========================================================================== */
+
+#scene-overworld {
+    background: #0b0812;
+}
+
+#overworld-container {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+/* Board holds the tile grid and the hero marker in one coordinate space,
+   scaled down when the frame is smaller than the natural 640x480 board. */
+.overworld-board {
+    position: relative;
+    width: 640px;
+    height: 480px;
+    transform-origin: center center;
+}
+
+.overworld-grid {
+    display: grid;
+    grid-template-columns: repeat(20, 32px);
+    grid-auto-rows: 32px;
+    border: 4px solid var(--panel-edge);
+    outline: 4px solid var(--panel-edge-dark);
+    box-shadow: 0 0 0 8px var(--panel), 0 12px 32px var(--shadow);
+}
+
+.tile {
+    width: 32px;
+    height: 32px;
+}
+
+/* Flat 8-bit palette tiles, consistent with the battle scene colors.
+   Tree is a very dark forest green so it reads clearly against grass. */
+.tile-grass {
+    background: #2f8f1f;
+}
+
+.tile-tree {
+    background: #14320c;
+}
+
+.tile-water {
+    background: #2a5ecc;
+}
+
+.tile-path {
+    background: #b98d4f;
+}
+
+/* Hero marker wrapper: positioned over the grid, holds the sprite and a
+   hidden SVG silhouette fallback (shown when the sprite fails to load). */
+.hero-map-sprite {
+    position: absolute;
+    width: 32px;
+    height: 32px;
+    z-index: 5;
+    transition: left 200ms steps(8), top 200ms steps(8);
+}
+
+.hero-map-sprite img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.5));
+}
+
+.hero-fallback {
+    display: none;
+}
+
+.hero-map-sprite.sprite-failed img {
+    display: none;
+}
+
+.hero-map-sprite.sprite-failed .hero-fallback {
+    display: block;
+}
+
+.hero-fallback svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+/* --- NPC markers (Phase 11 Segment 4) --- */
+
+.npc-marker {
+    position: absolute;
+    width: 32px;
+    height: 32px;
+    z-index: 4;
+    box-shadow: inset 0 0 0 2px rgba(0, 0, 0, 0.4);
+}
+
+.npc-villager {
+    background: #b8860b;
+}
+
+.npc-guard {
+    background: #7a7f8a;
+}
+
+/* --- Overworld dialogue box (retro style, bottom of the map) --- */
+
+.overworld-dialogue {
+    position: absolute;
+    left: 50%;
+    bottom: 4%;
+    transform: translateX(-50%);
+    z-index: 10;
+    width: min(92%, 560px);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 14px;
+    background: var(--panel);
+    border: 3px solid var(--panel-edge);
+    outline: 3px solid var(--panel-edge-dark);
+    box-shadow: inset 0 0 0 2px #000, 0 10px 24px var(--shadow);
+}
+
+.overworld-dialogue .npc-name {
+    margin: 0;
+    font-size: clamp(9px, 1.4vw, 11px);
+    letter-spacing: 0.25em;
+    color: var(--panel-edge);
+    text-shadow: 1px 1px 0 #000;
+}
+
+.overworld-dialogue .npc-line {
+    margin: 0;
+    font-size: clamp(11px, 1.8vw, 14px);
+    letter-spacing: 0.06em;
+    color: var(--ink);
+    text-shadow: 1px 1px 0 #000;
+}

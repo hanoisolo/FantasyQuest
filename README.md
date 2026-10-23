@@ -21,9 +21,10 @@ Then visit `http://localhost:8000`.
 
 Controls:
 
-- On the title screen, click / tap or press `Space` / `Enter` to enter the battle arena (Pass 1).
+- On the title screen, click / tap or press `Space` / `Enter` to enter the overworld (Phase 11).
+- In the overworld, move with the arrow keys or `WASD` (strictly tile-to-tile; trees, water, and NPCs block movement). Press `E`, `Space`, or `Enter` while facing an NPC to open their dialogue box; the same key advances each line and closes the box after the last line. Walking in the forest can trigger random encounters (goblins and wolves, 15% chance per step with a safe grace period after entering or after a battle).
 - In battle, click the command buttons: `ATTACK` (then click a glowing enemy to target it), `MAGIC` (10 MP, hits all enemies), `ITEM` (use the Arcane Crystal to heal 50 HP, once per battle), `DEFEND` (halve incoming damage for one enemy turn).
-- Winning a battle awards EXP and Gold (Phase 9/10). Leveling up raises MaxHP (+5) and Attack (+2) and fully heals the hero. Level, EXP, and Gold persist across battles and are shown in the hero HUD.
+- Winning a battle awards EXP and Gold (Phase 9/10). Leveling up raises MaxHP (+5) and Attack (+2) and fully heals the hero. Level, EXP, and Gold persist across battles (including overworld encounters) and are shown in the hero HUD.
 - Click the `CRT: ON` button or press `S` to toggle the CRT scanline effect.
 
 ## Project Structure
@@ -35,6 +36,8 @@ FantasyQuest/
 ├── audio.js                   Web Audio 16-bit SFX synthesizer
 ├── progression.js             EXP & leveling module (Phase 9)
 ├── battle.js                  Turn-based battle engine (Pass 1 + Phase 9/10 rewards)
+├── overworld.js               Pure overworld logic: map, movement, encounters, NPCs (Phase 11)
+├── overworld_scene.js         Overworld rendering, input, and dialogue box (Phase 11)
 ├── assets/
 │   ├── backgrounds/           Battle and scene backdrops
 │   ├── portraits/             Character dialogue portraits
@@ -64,6 +67,8 @@ FantasyQuest/
 | Filename | Folder | Dimensions | Transparency | Description |
 | --- | --- | --- | --- | --- |
 | hero_walk_sheet.png | assets/sprites/ | 256x256 | Yes | Four-direction walk cycle spritesheet for the hero |
+| villager_map.png | assets/sprites/ | 32x32 | Yes | Old Villager overworld marker (flat-color placeholder in use) |
+| guard_map.png | assets/sprites/ | 32x32 | Yes | Pond Guard overworld marker (flat-color placeholder in use) |
 | slime_sprite.png | assets/sprites/ | 64x64 | Yes | Forest slime enemy battle sprite |
 | village_battle.png | assets/backgrounds/ | 1376x768 | No | Village battle backdrop |
 | cave_battle.png | assets/backgrounds/ | 1376x768 | No | Cave battle backdrop |

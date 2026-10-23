@@ -28,7 +28,9 @@ Track Gold in the player's inventory object. (Hero profile persists gold across 
 
 
 
-Phase 11: NPCs and Dialogue
+Phase 11: NPCs and Dialogue [DONE]
+
+Status note: overworld exploration scene shipped — grid-to-grid movement over a 20x15 forest clearing (tree borders, pond, path), random forest encounters (goblin/wolf, 15% per step after a 3-step grace), and two map NPCs (Old Villager by the path, Pond Guard at the pond) with multi-line dialogue opened by facing them and pressing E / Space / Enter.
 
 
 
