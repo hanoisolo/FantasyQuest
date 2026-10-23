@@ -16,12 +16,12 @@ var Battle = (function () {
     var CONFIG = {
         hero: { name: 'HERO', maxHp: 120, maxMp: 45, attackDamage: 28 },
         enemies: [
-            { id: 'goblin', name: 'FOREST GOBLIN', maxHp: 55, atkMin: 8, atkMax: 13, art: 'goblin' },
-            { id: 'wolf', name: 'SHADOW WOLF', maxHp: 45, atkMin: 10, atkMax: 15, art: 'wolf' }
+            { id: 'goblin', name: 'FOREST GOBLIN', maxHp: 55, atkMin: 8, atkMax: 13, art: 'goblin', expReward: 25, goldReward: 18 },
+            { id: 'wolf', name: 'SHADOW WOLF', maxHp: 45, atkMin: 10, atkMax: 15, art: 'wolf', expReward: 20, goldReward: 12 }
         ],
         magic: { name: 'Arcane Spark', cost: 10, damage: 20 },
         item: { name: 'Arcane Crystal', heal: 50 },
-        rewards: { exp: 45, gold: 30 },
+        rewards: { exp: 0, gold: 0 },
         enemyTurnDelayMs: 800,
         enemyStrikeGapMs: 600
     };
@@ -30,27 +30,66 @@ var Battle = (function () {
     var el = {};  // cached DOM nodes
     var wired = false;
 
+    // Persistent hero profile across battles (Phase 9/10 progression).
+    // HP/MP are refilled at the start of each battle; level, EXP, gold,
+    // maxHp and attackDamage carry over and grow via level-ups.
+    var profile = null;
+
+    function freshProfile() {
+        return {
+            level: 1,
+            experience: 0,
+            gold: 0,
+            maxHp: CONFIG.hero.maxHp,
+            maxMp: CONFIG.hero.maxMp,
+            attackDamage: CONFIG.hero.attackDamage
+        };
+    }
+
     // ------------------------------------------------------------------
     // State
     // ------------------------------------------------------------------
 
     function freshState() {
+        if (!profile) {
+            profile = freshProfile();
+        }
         return {
             phase: 'player', // player | target | enemy | victory | defeat
             hero: {
                 name: CONFIG.hero.name,
-                hp: CONFIG.hero.maxHp,
-                maxHp: CONFIG.hero.maxHp,
-                mp: CONFIG.hero.maxMp,
-                maxMp: CONFIG.hero.maxMp,
-                defending: false
+                hp: profile.maxHp,
+                maxHp: profile.maxHp,
+                mp: profile.maxMp,
+                maxMp: profile.maxMp,
+                attackDamage: profile.attackDamage,
+                defending: false,
+                // Phase 9/10 progression (persists across battles via profile)
+                level: profile.level,
+                experience: profile.experience,
+                gold: profile.gold
             },
             enemies: CONFIG.enemies.map(function (e) {
                 return { id: e.id, name: e.name, hp: e.maxHp, maxHp: e.maxHp };
             }),
             itemUsed: false,
-            turnCount: 0
+            turnCount: 0,
+            // Rewards granted on victory (computed in showVictory)
+            lastExpGained: 0,
+            lastGoldGained: 0,
+            leveledUp: false
         };
+    }
+
+    function syncProfileFromHero() {
+        if (!profile || !S) {
+            return;
+        }
+        profile.level = S.hero.level;
+        profile.experience = S.hero.experience;
+        profile.gold = S.hero.gold;
+        profile.maxHp = S.hero.maxHp;
+        profile.attackDamage = S.hero.attackDamage;
     }
 
     function state() {
@@ -63,9 +102,16 @@ var Battle = (function () {
             heroMaxHp: S.hero.maxHp,
             heroMp: S.hero.mp,
             heroMaxMp: S.hero.maxMp,
+            heroAttackDamage: S.hero.attackDamage,
             defending: S.hero.defending,
             itemUsed: S.itemUsed,
             turnCount: S.turnCount,
+            heroLevel: S.hero.level,
+            heroExperience: S.hero.experience,
+            heroGold: S.hero.gold,
+            lastExpGained: S.lastExpGained,
+            lastGoldGained: S.lastGoldGained,
+            leveledUp: S.leveledUp,
             enemies: S.enemies.map(function (e) {
                 return { id: e.id, name: e.name, hp: e.hp, maxHp: e.maxHp, alive: e.hp > 0 };
             })
@@ -155,6 +201,17 @@ var Battle = (function () {
         el.heroUnit.classList.toggle('defending', S.hero.defending);
         el.turnIndicator.classList.toggle('active', S.phase === 'player');
 
+        if (el.heroLevelText) {
+            var expToNext = window.Progression
+                ? window.Progression.experienceToNextLevel(S.hero.experience)
+                : null;
+            el.heroLevelText.textContent = 'LV ' + S.hero.level +
+                (expToNext !== null ? '  EXP ' + S.hero.experience + ' (next ' + expToNext + ')' : '  MAX');
+        }
+        if (el.heroGoldText) {
+            el.heroGoldText.textContent = S.hero.gold + ' G';
+        }
+
         // Enemy units
         var units = el.enemyRow.querySelectorAll('.enemy-unit');
         for (var i = 0; i < units.length; i++) {
@@ -242,7 +299,7 @@ var Battle = (function () {
             return;
         }
         S.phase = 'resolving';
-        var damage = CONFIG.hero.attackDamage;
+        var damage = S.hero.attackDamage;
         enemy.hp = Math.max(0, enemy.hp - damage);
 
         var unit = el.enemyRow.querySelector('[data-index="' + index + '"]');
@@ -394,11 +451,58 @@ var Battle = (function () {
         }).length;
     }
 
+    function computeRewards() {
+        var exp = 0;
+        var gold = 0;
+        for (var i = 0; i < S.enemies.length; i++) {
+            var cfg = null;
+            for (var c = 0; c < CONFIG.enemies.length; c++) {
+                if (CONFIG.enemies[c].id === S.enemies[i].id) {
+                    cfg = CONFIG.enemies[c];
+                    break;
+                }
+            }
+            if (cfg) {
+                exp += cfg.expReward || 0;
+                gold += cfg.goldReward || 0;
+            }
+        }
+        return { exp: exp, gold: gold };
+    }
+
     function showVictory() {
         S.phase = 'victory';
+
+        var rewards = computeRewards();
+        S.lastExpGained = rewards.exp;
+        S.lastGoldGained = rewards.gold;
+
+        S.hero.gold += rewards.gold;
+
+        var result = { leveledUp: false, levelsGained: 0 };
+        if (window.Progression) {
+            result = window.Progression.gainExperience(S.hero, rewards.exp);
+        } else {
+            S.hero.experience += rewards.exp;
+        }
+        S.leveledUp = result.leveledUp;
+
+        syncProfileFromHero();
+
+        var overlayLine = el.victoryScreen.querySelector('.result-line');
+        if (overlayLine) {
+            var line = '+' + rewards.exp + ' EXP and +' + rewards.gold + ' Gold';
+            if (result.leveledUp) {
+                line += ' - LEVEL UP! Now Lv ' + S.hero.level + '!';
+            }
+            overlayLine.textContent = line;
+        }
+
         el.victoryScreen.classList.remove('hidden');
         RetroAudio.fanfare();
-        say('The forest falls silent... VICTORY!');
+        say(result.leveledUp
+            ? 'VICTORY! You reached Lv ' + S.hero.level + '! (+' + rewards.exp + ' EXP, +' + rewards.gold + 'G)'
+            : 'The forest falls silent... VICTORY! (+' + rewards.exp + ' EXP, +' + rewards.gold + 'G)');
         render();
     }
 
@@ -442,6 +546,8 @@ var Battle = (function () {
         el.heroMpFill = $('hero-mp-fill');
         el.heroHpText = $('hero-hp-text');
         el.heroMpText = $('hero-mp-text');
+        el.heroLevelText = $('hero-level-text');
+        el.heroGoldText = $('hero-gold-text');
         el.turnIndicator = $('turn-indicator');
         el.message = $('battle-message');
         el.victoryScreen = $('victory-screen');

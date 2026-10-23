@@ -375,6 +375,20 @@ canvas#game-canvas {
     text-shadow: 1px 1px 0 #000;
 }
 
+.stat-line {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: clamp(7px, 1vw, 10px);
+    letter-spacing: 0.1em;
+    color: var(--dim);
+    text-shadow: 1px 1px 0 #000;
+}
+
+.stat-line #hero-gold-text {
+    color: var(--panel-edge);
+}
+
 .hero-unit.defending .hero-bust {
     border-color: #7ec8ff;
     box-shadow: 0 0 12px rgba(126, 200, 255, 0.55), 0 8px 16px var(--shadow);
