@@ -118,6 +118,7 @@ function load(file) {
   vm.runInContext(src, sandbox, { filename: file });
 }
 load('audio.js');
+load('progression.js'); // Phase 12: the ITEM command routes through Progression.usePotion
 load('battle.js');
 
 const Battle = sandbox.window.Battle || sandbox.Battle;
@@ -160,7 +161,7 @@ eq(s.phase, 'player', 'initial phase is "player"');
 eq(s.heroHp, 120, 'hero starts at full HP (120)');
 eq(s.heroMaxHp, 120, 'hero max HP is 120');
 eq(s.heroMp, 45, 'hero starts at full MP (45)');
-eq(s.itemUsed, false, 'item not yet used');
+eq(s.heroPotions, 1, 'hero starts with 1 potion (brand-new profile)');
 eq(s.enemies.length, 2, 'two enemies on the field');
 eq(s.enemies[0].hp, 55, 'Forest Goblin starts at 55 HP');
 eq(s.enemies[1].hp, 45, 'Shadow Wolf starts at 45 HP');
@@ -204,16 +205,29 @@ s = Battle.state();
 eq(s.defending, false, 'defending flag clears after the enemy turn');
 eq(s.phase, 'player', 'phase returns to player after defend + enemy turn');
 
-// --- Item flow ---
+// --- Item flow (Phase 12: potions replace the one-shot Arcane Crystal) ---
 const hpBeforeItem = Battle.state().heroHp;
-Battle.command('item'); // opens the panel
-const panelHidden = registry['item-panel'].classList.contains('hidden');
-eq(panelHidden, false, 'ITEM command opens the item panel');
-registry['item-use'].click(); // USE the crystal
+const potionsBeforeItem = Battle.state().heroPotions;
+const turnCountBeforeItem = Battle.state().turnCount;
+Battle.command('item'); // uses a potion immediately (same pattern as MAGIC)
+s = Battle.state();
+eq(s.heroPotions, potionsBeforeItem - 1, 'ITEM consumes one potion (1 -> 0)');
+eq(s.heroHp, Math.min(hpBeforeItem + 30, s.heroMaxHp), 'potion restores 30 HP, clamped to maxHp');
 flush();
 s = Battle.state();
-ok(s.heroHp > hpBeforeItem, 'using the Arcane Crystal heals the hero (' + hpBeforeItem + ' -> ' + s.heroHp + ')');
-eq(s.itemUsed, true, 'itemUsed flag set after use');
+eq(s.turnCount, turnCountBeforeItem + 1, 'using a potion consumes the turn (enemy acted)');
+eq(s.phase, 'player', 'phase returns to player after potion + enemy turn');
+
+// --- Empty inventory: 0 potions -> message only, no turn consumed ---
+const hpBeforeEmpty = Battle.state().heroHp;
+const turnCountBeforeEmpty = Battle.state().turnCount;
+Battle.command('item');
+s = Battle.state();
+eq(s.heroPotions, 0, 'empty inventory keeps potions at 0');
+eq(s.heroHp, hpBeforeEmpty, 'empty inventory does not heal');
+eq(s.turnCount, turnCountBeforeEmpty, 'empty inventory consumes no turn');
+eq(registry['battle-message'].textContent, 'No potions!', 'empty inventory shows the No potions! message');
+eq(s.phase, 'player', 'empty inventory keeps the phase on player');
 
 // --- Grind the fight to victory ---
 let guard = 0;
@@ -239,15 +253,17 @@ const hpAtVictory = Battle.state().heroHp;
 Battle.command('magic');
 eq(Battle.state().heroHp, hpAtVictory, 'commands are ignored once the battle is over');
 
-// --- playAgain resets everything ---
+// --- playAgain resets the battle but persists hero HP and potions ---
+const hpAtVictoryEnd = Battle.state().heroHp;
 Battle.playAgain();
 s = Battle.state();
 eq(s.phase, 'player', 'playAgain() resets phase to "player"');
-eq(s.heroHp, 120, 'playAgain() restores hero HP to full');
+eq(s.heroHp, hpAtVictoryEnd, 'victory HP written back: next battle starts at the persistent HP');
+eq(s.heroMaxHp, 125, 'level-up maxHp (125) persists into the next battle');
 eq(s.heroMp, 45, 'playAgain() restores hero MP to full');
 eq(s.enemies[0].hp, 55, 'playAgain() restores Goblin HP');
 eq(s.enemies[1].hp, 45, 'playAgain() restores Wolf HP');
-eq(s.itemUsed, false, 'playAgain() resets the itemUsed flag');
+eq(s.heroPotions, 0, 'playAgain() keeps the persistent potion count (used potion stays consumed)');
 eq(registry['victory-screen'].classList.contains('hidden'), true, 'playAgain() hides the victory overlay');
 
 // --- Defeat path: fresh battle, then verify guard via direct state manipulation is not

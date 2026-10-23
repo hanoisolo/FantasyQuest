@@ -20,7 +20,6 @@ var Battle = (function () {
             { id: 'wolf', name: 'SHADOW WOLF', maxHp: 45, atkMin: 10, atkMax: 15, art: 'wolf', expReward: 20, goldReward: 12 }
         ],
         magic: { name: 'Arcane Spark', cost: 10, damage: 20 },
-        item: { name: 'Arcane Crystal', heal: 50 },
         enemyTurnDelayMs: 800,
         enemyStrikeGapMs: 600
     };
@@ -39,7 +38,7 @@ var Battle = (function () {
     var profile = null;
 
     function freshProfile() {
-        return {
+        var p = {
             level: 1,
             experience: 0,
             gold: 0,
@@ -47,6 +46,15 @@ var Battle = (function () {
             maxMp: CONFIG.hero.maxMp,
             attackDamage: CONFIG.hero.attackDamage
         };
+        // Phase 12: persistent vitals. A brand-new profile starts at full
+        // HP with 1 potion; afterwards hp/potions carry across battles.
+        if (window.Progression && window.Progression.initProfileVitals) {
+            window.Progression.initProfileVitals(p);
+        } else {
+            p.hp = p.maxHp;
+            p.potions = 0;
+        }
+        return p;
     }
 
     // ------------------------------------------------------------------
@@ -61,11 +69,14 @@ var Battle = (function () {
             phase: 'player', // player | target | enemy | victory | defeat
             hero: {
                 name: CONFIG.hero.name,
-                hp: profile.maxHp,
+                // Phase 12: battles start from the profile's persistent HP
+                // (no full heal at battle start); MP still refills.
+                hp: profile.hp !== undefined ? profile.hp : profile.maxHp,
                 maxHp: profile.maxHp,
                 mp: profile.maxMp,
                 maxMp: profile.maxMp,
                 attackDamage: profile.attackDamage,
+                potions: profile.potions !== undefined ? profile.potions : 0,
                 defending: false,
                 // Phase 9/10 progression (persists across battles via profile)
                 level: profile.level,
@@ -77,7 +88,6 @@ var Battle = (function () {
             }).map(function (e) {
                 return { id: e.id, name: e.name, hp: e.maxHp, maxHp: e.maxHp };
             }),
-            itemUsed: false,
             turnCount: 0,
             // Rewards granted on victory (computed in showVictory)
             lastExpGained: 0,
@@ -95,6 +105,10 @@ var Battle = (function () {
         profile.gold = S.hero.gold;
         profile.maxHp = S.hero.maxHp;
         profile.attackDamage = S.hero.attackDamage;
+        // Phase 12: persistent vitals written back on victory so the next
+        // battle (and the overworld) resume from the hero's current state.
+        profile.hp = S.hero.hp;
+        profile.potions = S.hero.potions;
     }
 
     function state() {
@@ -109,7 +123,7 @@ var Battle = (function () {
             heroMaxMp: S.hero.maxMp,
             heroAttackDamage: S.hero.attackDamage,
             defending: S.hero.defending,
-            itemUsed: S.itemUsed,
+            heroPotions: S.hero.potions,
             turnCount: S.turnCount,
             heroLevel: S.hero.level,
             heroExperience: S.hero.experience,
@@ -297,7 +311,7 @@ var Battle = (function () {
             if (S.phase !== 'player') {
                 return;
             }
-            toggleItemPanel();
+            doItem();
         } else if (name === 'defend') {
             if (S.phase !== 'player') {
                 return;
@@ -387,21 +401,35 @@ var Battle = (function () {
         window.setTimeout(endPlayerTurn, 350);
     }
 
-    function useItem() {
-        if (S.itemUsed) {
+    /*
+     * ITEM command (Phase 12): uses a potion from the persistent inventory,
+     * same immediate-effect pattern as MAGIC. With no potions (or no
+     * progression module) it only shows a message and consumes no turn.
+     */
+    function doItem() {
+        if (!S.hero.potions || S.hero.potions <= 0) {
+            say('No potions!');
+            RetroAudio.beep();
             return;
         }
-        var healed = Math.min(CONFIG.item.heal, S.hero.maxHp - S.hero.hp);
-        S.itemUsed = true;
-        S.hero.hp += healed;
+        if (!window.Progression || !window.Progression.usePotion) {
+            say('No potions!');
+            RetroAudio.beep();
+            return;
+        }
+        var before = S.hero.hp;
+        if (!window.Progression.usePotion(S.hero)) {
+            say('HP is already full!');
+            RetroAudio.beep();
+            return;
+        }
+        var healed = S.hero.hp - before;
         S.phase = 'resolving';
-
-        RetroAudio.heal();
+        RetroAudio.drink(); // Phase 12 potion drink tone
         floatNumber(el.heroUnit, '+' + healed, 'heal');
-        say('HERO uses the ' + CONFIG.item.name + '! Restores ' + healed + ' HP.');
-        toggleItemPanel(false);
+        say('HERO drinks a potion! Restores ' + healed + ' HP.');
         render();
-        window.setTimeout(checkAfterPlayerAction, 350);
+        window.setTimeout(checkAfterPlayerAction, 350); // consumes the turn
     }
 
     function checkAfterPlayerAction() {
@@ -562,17 +590,16 @@ var Battle = (function () {
         start();
     }
 
-    // ------------------------------------------------------------------
-    // Item panel
-    // ------------------------------------------------------------------
-
-    function toggleItemPanel(force) {
-        var show = typeof force === 'boolean' ? force : el.itemPanel.classList.contains('hidden');
-        el.itemPanel.classList.toggle('hidden', !show);
-        if (show) {
-            say('Arcane Crystal — restores 50 HP. Use it?');
-            el.itemUseBtn.disabled = S.itemUsed;
+    /*
+     * Phase 12: the live hero profile (gold, potions, hp, progression) so
+     * the overworld HUD and shop can transact against the same object the
+     * battle engine uses. Lazily creates the profile.
+     */
+    function getProfile() {
+        if (!profile) {
+            profile = freshProfile();
         }
+        return profile;
     }
 
     // ------------------------------------------------------------------
@@ -594,8 +621,6 @@ var Battle = (function () {
         el.message = $('battle-message');
         el.victoryScreen = $('victory-screen');
         el.defeatScreen = $('defeat-screen');
-        el.itemPanel = $('item-panel');
-        el.itemUseBtn = $('item-use');
         el.commands = {
             attack: $('cmd-attack'),
             magic: $('cmd-magic'),
@@ -621,15 +646,6 @@ var Battle = (function () {
         el.commands.defend.addEventListener('click', function () {
             command('defend');
         });
-        el.itemUseBtn.addEventListener('click', function () {
-            if (S && S.phase === 'player' && !S.itemUsed) {
-                useItem();
-            }
-        });
-        $('item-cancel').addEventListener('click', function () {
-            RetroAudio.beep();
-            toggleItemPanel(false);
-        });
         $('victory-again').addEventListener('click', playAgain);
         $('defeat-retry').addEventListener('click', playAgain);
     }
@@ -644,7 +660,6 @@ var Battle = (function () {
             .forEach(function (cfg, i) {
                 el.enemyRow.appendChild(buildEnemyUnit(cfg, i));
             });
-        toggleItemPanel(false);
         el.victoryScreen.classList.add('hidden');
         el.defeatScreen.classList.add('hidden');
         if (activeEnemyIds && S.enemies.length === 1) {
@@ -670,6 +685,7 @@ var Battle = (function () {
         init: init,
         command: command,
         state: state,
-        playAgain: playAgain
+        playAgain: playAgain,
+        getProfile: getProfile
     };
 })();

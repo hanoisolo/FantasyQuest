@@ -14,6 +14,13 @@ const ROOT = path.resolve(__dirname, '..');
 const sandbox = { window: {} };
 sandbox.globalThis = sandbox;
 vm.createContext(sandbox);
+// Phase 12: the shop routes purchases through Progression.buyPotion,
+// so progression.js must be loaded before overworld.js.
+vm.runInContext(
+  fs.readFileSync(path.join(ROOT, 'progression.js'), 'utf8'),
+  sandbox,
+  { filename: 'progression.js' }
+);
 vm.runInContext(
   fs.readFileSync(path.join(ROOT, 'overworld.js'), 'utf8'),
   sandbox,
@@ -253,7 +260,9 @@ ok(!threw, 'registerStep runs without an injected rng');
 // ---- NPCs and dialogue (Phase 11 Segment 4) --------------------------------
 console.log('\n== Phase 11: NPCs and dialogue ==');
 
-eq(Overworld.NPCS.length, 2, 'two NPCs are defined on the map');
+// UPDATED for Phase 12: was 2 ("two NPCs are defined on the map"); the
+// Merchant NPC was added to the map, superseding the two-NPC design.
+eq(Overworld.NPCS.length, 3, 'three NPCs are defined on the map (villager, guard, merchant)');
 eq(Overworld.NPCS[0].id, 'villager', 'first NPC is the villager');
 eq(Overworld.NPCS[1].id, 'guard', 'second NPC is the guard');
 ok(Overworld.NPCS[0].dialogue.length >= 2 && Overworld.NPCS[1].dialogue.length >= 2,
@@ -319,10 +328,96 @@ Overworld.endDialogue(dLast);
 eq(JSON.stringify(dLast), beforeDlg, 'advanceDialogue/endDialogue never mutate input');
 
 // Player state carries the NPC list and it survives movement cloning
-eq(Overworld.createPlayerState(map, 8, 12).npcs.length, 2,
+// UPDATED for Phase 12: was 2; the default NPC list now includes the Merchant.
+eq(Overworld.createPlayerState(map, 8, 12).npcs.length, 3,
   'player state carries the default NPC list');
 const npcCarry = Overworld.attemptMove(Overworld.createPlayerState(map, 8, 12), 'down', 16);
-eq(npcCarry.npcs.length, 2, 'NPC list is preserved across attemptMove');
+// UPDATED for Phase 12: was 2; the NPC list now includes the Merchant.
+eq(npcCarry.npcs.length, 3, 'NPC list is preserved across attemptMove');
+
+// ---- Merchant NPC and shop (Phase 12 Segment 3) -----------------------------
+console.log('\n== Phase 12: Merchant NPC and shop ==');
+
+const merchant = Overworld.NPCS.find(n => n.id === 'merchant');
+ok(merchant !== undefined, 'merchant NPC is defined');
+eq(merchant.x, 6, 'merchant stands at tile x=6');
+eq(merchant.y, 9, 'merchant stands at tile y=9');
+eq(Overworld.isWalkableTile(map, merchant.x, merchant.y), true,
+  'merchant tile is free terrain (grass), not a blocked tile');
+eq(merchant.shop, true, 'merchant carries the shop flag');
+ok(Overworld.NPCS.every((n, i, all) => all.findIndex(m => m.x === n.x && m.y === n.y) === i),
+  'no two NPCs occupy the same tile');
+ok(merchant.dialogue.length >= 2, 'merchant has a multi-line dialogue before the shop');
+
+// Merchant tile blocks movement, like every NPC
+const merchantBlockLeft = Overworld.attemptMove(
+  Overworld.createPlayerState(map, 5, 9), 'right', 16);
+eq(merchantBlockLeft.x, 5, 'walking right into the merchant is blocked (x stays)');
+eq(merchantBlockLeft.moving.active, false, 'blocked merchant move starts no step');
+const merchantBlockRight = Overworld.attemptMove(
+  Overworld.createPlayerState(map, 7, 9), 'left', 16);
+eq(merchantBlockRight.x, 7, 'walking left into the merchant is blocked (x stays)');
+eq(merchantBlockRight.facing, 'left', 'facing updates even when the merchant blocks the move');
+
+// Facing the merchant returns them for interaction
+const facingMerchant = Overworld.createPlayerState(map, 5, 9, 'right');
+eq(Overworld.getFacingNpc(map, Overworld.NPCS, facingMerchant).id, 'merchant',
+  'getFacingNpc returns the merchant when facing them');
+
+// Shop state machine
+ok(typeof Overworld.openShop === 'function', 'Overworld.openShop() exists');
+ok(typeof Overworld.shopBuy === 'function', 'Overworld.shopBuy() exists');
+ok(typeof Overworld.shopLeave === 'function', 'Overworld.shopLeave() exists');
+
+const shop0 = Overworld.openShop(merchant);
+eq(shop0.open, true, 'openShop opens the shop');
+eq(shop0.merchantId, 'merchant', 'shop tracks the merchant id');
+ok(shop0.lastMessage.indexOf('15') !== -1, 'shop greeting quotes the potion price');
+
+// Successful buy: gold spent, potion gained, shop stays open
+const richProfile = { gold: 15, potions: 1 };
+const shop1 = Overworld.shopBuy(shop0, richProfile);
+eq(shop1.open, true, 'shop stays open after a successful purchase');
+eq(richProfile.gold, 0, 'successful buy spends 15 gold');
+eq(richProfile.potions, 2, 'successful buy adds one potion');
+ok(shop1.lastMessage.indexOf('Potion purchased') !== -1,
+  'successful buy shows a confirmation line');
+
+// Insufficient gold: state untouched, shop stays open
+const poorProfile = { gold: 14, potions: 2 };
+const shop2 = Overworld.shopBuy(shop0, poorProfile);
+eq(shop2.open, true, 'shop stays open after a failed purchase');
+eq(poorProfile.gold, 14, 'failed buy leaves gold untouched');
+eq(poorProfile.potions, 2, 'failed buy leaves potions untouched');
+eq(shop2.lastMessage, 'Not enough gold!', 'failed buy shows the Not enough gold! message');
+
+// Repeat purchases while the shop is open
+const bulkProfile = { gold: 45, potions: 0 };
+let bulkShop = Overworld.openShop(merchant);
+bulkShop = Overworld.shopBuy(bulkShop, bulkProfile);
+bulkShop = Overworld.shopBuy(bulkShop, bulkProfile);
+bulkShop = Overworld.shopBuy(bulkShop, bulkProfile);
+eq(bulkProfile.gold, 0, 'three purchases cost 45 gold total');
+eq(bulkProfile.potions, 3, 'three purchases add three potions');
+eq(bulkShop.open, true, 'shop remains open across repeated purchases');
+
+// Leave closes the shop (the scene layer restores exploration control)
+const shop3 = Overworld.shopLeave(shop0);
+eq(shop3.open, false, 'Leave closes the shop');
+eq(shop3.lastMessage, '', 'closing clears the shop message');
+
+// Buying from a closed shop is a no-op
+const closedProfile = { gold: 30, potions: 0 };
+const closedShop = Overworld.shopBuy(shop3, closedProfile);
+eq(closedShop.open, false, 'buying from a closed shop keeps it closed');
+eq(closedProfile.gold, 30, 'buying from a closed shop spends no gold');
+eq(closedProfile.potions, 0, 'buying from a closed shop adds no potions');
+
+// Purity: shop functions never mutate the input shop object
+const shopBefore = JSON.stringify(shop0);
+Overworld.shopBuy(shop0, { gold: 100, potions: 0 });
+Overworld.shopLeave(shop0);
+eq(JSON.stringify(shop0), shopBefore, 'shopBuy/shopLeave never mutate the input shop');
 
 // ---- Result ------------------------------------------------------------------
 console.log('\n----------------------------------------');
