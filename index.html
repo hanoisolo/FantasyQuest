@@ -89,6 +89,11 @@
                     </div>
                 </div>
             </div>
+
+            <!-- ===================== OVERWORLD SCENE ===================== -->
+            <div class="scene" id="scene-overworld">
+                <div id="overworld-container"></div>
+            </div>
         </div>
 
         <div class="controls">
@@ -99,6 +104,8 @@
     <script src="audio.js"></script>
     <script src="progression.js"></script>
     <script src="battle.js"></script>
+    <script src="overworld.js"></script>
+    <script src="overworld_scene.js"></script>
     <script>
         (function () {
             'use strict';
@@ -198,6 +205,21 @@
                     startGame();
                 }
             });
+        })();
+    </script>
+
+    <!-- TODO(Phase 11 Segment 3): temporary direct overworld init for the
+         Segment 2 rendering check only. Segment 3 replaces this with the
+         proper title-screen scene flow. -->
+    <script>
+        (function () {
+            'use strict';
+            var container = document.getElementById('overworld-container');
+            if (container && window.OverworldScene) {
+                window.OverworldScene.initOverworld(container);
+                document.getElementById('scene-title').classList.remove('active');
+                document.getElementById('scene-overworld').classList.add('active');
+            }
         })();
     </script>
 </body>
