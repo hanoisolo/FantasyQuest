@@ -272,6 +272,21 @@ registry['defeat-retry'].click();
 s = Battle.state();
 eq(s.phase, 'player', 'defeat RETRY button also resets the battle');
 
+// --- Defeat fairness (Phase 12): retried battle starts at full HP ---
+// Grind this battle to a real defeat by defending every turn.
+let defeatGuard = 0;
+while (Battle.state().phase !== 'defeat' && defeatGuard < 500) {
+  defeatGuard++;
+  Battle.command('defend');
+  flush();
+}
+s = Battle.state();
+eq(s.phase, 'defeat', 'defend-only grind reaches defeat');
+eq(s.heroHp, 0, 'hero HP reaches 0 at defeat');
+Battle.playAgain(); // the defeat RETRY path
+s = Battle.state();
+eq(s.heroHp, s.heroMaxHp, 'retried battle starts at full HP after a defeat');
+
 console.log('\n----------------------------------------');
 console.log('RESULT: ' + passed + ' passed, ' + failed + ' failed');
 process.exit(failed === 0 ? 0 : 1);

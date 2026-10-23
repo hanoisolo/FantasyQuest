@@ -578,6 +578,12 @@ var Battle = (function () {
 
     function showDefeat() {
         S.phase = 'defeat';
+        // Fairness rule: a defeated hero does not carry a battered HP
+        // into the retried battle — restore the persistent profile to
+        // full HP before the RETRY button starts the next attempt.
+        if (profile) {
+            profile.hp = profile.maxHp;
+        }
         el.defeatScreen.classList.remove('hidden');
         RetroAudio.gameOver();
         say('HERO has fallen...');
