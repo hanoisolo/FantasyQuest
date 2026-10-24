@@ -249,6 +249,13 @@
             titleScene.addEventListener('click', startGame);
             titleScene.addEventListener('touchstart', startGame, { passive: true });
             document.addEventListener('keydown', function (event) {
+                // Keyboard-activating a focused title-menu button (Enter /
+                // Space) must run the button's own action, not the generic
+                // title start: return without preventDefault so the native
+                // button activation fires.
+                if (event.target && event.target.closest && event.target.closest('.title-menu')) {
+                    return;
+                }
                 if (Scene.name() === 'title' &&
                     (event.key === ' ' || event.key === 'Enter' ||
                      event.code === 'Space' || event.code === 'Enter' || event.code === 'NumpadEnter')) {
