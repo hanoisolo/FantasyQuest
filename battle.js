@@ -1,40 +1,68 @@
 /*
- * FantasyQuest — Pass 1 turn-based battle engine.
- * Renders the battle arena as DOM (arena backdrop, hero bust, enemy
- * silhouettes, bars, command menu, floating damage numbers) so the whole
- * flow can be driven programmatically.
+ * FantasyQuest — Pass 1 Chrono Trigger battle loop.
+ *
+ * Turn-based combat driven by the reverse-engineered Chrono Trigger math
+ * in chrono_battle_engine.js (loaded as window.ChronoEngine in the
+ * browser): physical hits with 0.94-1.06 variance and 2.0x criticals,
+ * spell damage, and a speed-14 ATB gauge that gates the hero's turn.
+ *
+ * Game flow: TITLE -> COMBAT -> VICTORY / DEFEAT (overlays), with a
+ * full combat reset on PLAY AGAIN / RETRY BATTLE.
  *
  * Public API (window.Battle):
  *   init()                     wire the battle scene (idempotent)
- *   command(name, targetIndex) 'attack' | 'magic' | 'item' | 'defend' | ...
+ *   command(name, targetIndex) 'attack' | 'magic' | 'item' | 'defend'
  *   state()                    snapshot for UI and tests
  *   playAgain()                reset and restart the battle
+ *   getProfile()               persistent hero profile (overworld HUD)
  */
 var Battle = (function () {
     'use strict';
 
+    var Chrono = (typeof window !== 'undefined' && window.ChronoEngine) || null;
+
     var CONFIG = {
-        hero: { name: 'HERO', maxHp: 120, maxMp: 45, attackDamage: 28 },
-        enemies: [
-            { id: 'goblin', name: 'FOREST GOBLIN', maxHp: 55, atkMin: 8, atkMax: 13, art: 'goblin', expReward: 25, goldReward: 18 },
-            { id: 'wolf', name: 'SHADOW WOLF', maxHp: 45, atkMin: 10, atkMax: 15, art: 'wolf', expReward: 20, goldReward: 12 }
-        ],
-        magic: { name: 'Arcane Spark', cost: 10, damage: 20 },
-        enemyTurnDelayMs: 800,
-        enemyStrikeGapMs: 600
+        hero: {
+            name: 'HERO',
+            maxHp: 120,
+            maxMp: 45,
+            power: 14,        // calculatePhysicalDamage: (power*4/3) + ...
+            weaponAttack: 4,  // ... + (weapon_attack*5/8) - (defense*0.5)
+            magic: 12,        // calculateMagicDamage: (magic*4/3) + ...
+            defense: 4,
+            magicDefense: 4,
+            critRate: 0.15,   // 2.0x critical hits
+            speed: 14         // ATB gauge fill: calculateATBTick(14) = 87.5/tick
+        },
+        goblin: {
+            id: 'goblin',
+            name: 'FOREST GOBLIN',
+            maxHp: 45,
+            power: 6,
+            weaponAttack: 3,
+            defense: 6,
+            magicDefense: 4,
+            critRate: 0
+        },
+        enemyCount: 2,
+        magic: { name: 'Arcane Spark', cost: 10, power: 8 },
+        relic: { name: 'ARCANE CRYSTAL', heal: 50 },
+        victoryRewards: { exp: 45, gold: 30 },
+        atbTickMs: 400,
+        actionDelayMs: 350,
+        enemyPauseMs: 800,     // dramatic pause before the enemy strike
+        enemyStrikeGapMs: 600,
+        slashHitMs: 450,
+        dashMs: 500,
+        floatMs: 850            // nodes removed just after the 0.8s animation
     };
 
     var S = null; // battle state
     var el = {};  // cached DOM nodes
     var wired = false;
 
-    // Optional encounter filter (Phase 11): when set, only enemies with a
-    // matching id spawn. null spawns the full roster (default behavior).
-    var activeEnemyIds = null;
-
-    // Persistent hero profile across battles (Phase 9/10 progression).
-    // HP/MP are refilled at the start of each battle; level, EXP, gold,
-    // maxHp and attackDamage carry over and grow via level-ups.
+    // Persistent hero profile across battles (level/EXP/gold for the HUD
+    // and the overworld). Pass 1 resets HP/MP to full at every battle start.
     var profile = null;
 
     function freshProfile() {
@@ -44,10 +72,8 @@ var Battle = (function () {
             gold: 0,
             maxHp: CONFIG.hero.maxHp,
             maxMp: CONFIG.hero.maxMp,
-            attackDamage: CONFIG.hero.attackDamage
+            attackDamage: CONFIG.hero.power
         };
-        // Phase 12: persistent vitals. A brand-new profile starts at full
-        // HP with 1 potion; afterwards hp/potions carry across battles.
         if (window.Progression && window.Progression.initProfileVitals) {
             window.Progression.initProfileVitals(p);
         } else {
@@ -58,6 +84,48 @@ var Battle = (function () {
     }
 
     // ------------------------------------------------------------------
+    // Chrono engine stat adapters
+    // ------------------------------------------------------------------
+
+    function heroAttackStats() {
+        var perLevel = (window.Progression && window.Progression.ATTACK_PER_LEVEL) || 2;
+        return {
+            power: CONFIG.hero.power + (S.hero.level - 1) * perLevel,
+            weapon_attack: CONFIG.hero.weaponAttack,
+            magic: CONFIG.hero.magic,
+            crit_rate: CONFIG.hero.critRate,
+            defense: CONFIG.hero.defense,
+            magic_defense: CONFIG.hero.magicDefense
+        };
+    }
+
+    function heroDefenseStats() {
+        return {
+            power: CONFIG.hero.power,
+            weapon_attack: CONFIG.hero.weaponAttack,
+            magic: CONFIG.hero.magic,
+            crit_rate: 0,
+            defense: CONFIG.hero.defense,
+            magic_defense: CONFIG.hero.magicDefense
+        };
+    }
+
+    function goblinAttackStats() {
+        return {
+            power: CONFIG.goblin.power,
+            weapon_attack: CONFIG.goblin.weaponAttack,
+            crit_rate: CONFIG.goblin.critRate
+        };
+    }
+
+    function goblinDefenseStats() {
+        return {
+            defense: CONFIG.goblin.defense,
+            magic_defense: CONFIG.goblin.magicDefense
+        };
+    }
+
+    // ------------------------------------------------------------------
     // State
     // ------------------------------------------------------------------
 
@@ -65,31 +133,32 @@ var Battle = (function () {
         if (!profile) {
             profile = freshProfile();
         }
+        var enemies = [];
+        for (var i = 0; i < CONFIG.enemyCount; i++) {
+            enemies.push({
+                id: CONFIG.goblin.id,
+                name: CONFIG.goblin.name,
+                hp: CONFIG.goblin.maxHp,
+                maxHp: CONFIG.goblin.maxHp
+            });
+        }
         return {
-            phase: 'player', // player | target | enemy | victory | defeat
+            phase: 'charge', // charge | player | target | resolving | enemy | victory | defeat
             hero: {
                 name: CONFIG.hero.name,
-                // Phase 12: battles start from the profile's persistent HP
-                // (no full heal at battle start); MP still refills.
-                hp: profile.hp !== undefined ? profile.hp : profile.maxHp,
+                hp: profile.maxHp,       // Pass 1: full HP/MP every battle
                 maxHp: profile.maxHp,
-                mp: profile.maxMp,
-                maxMp: profile.maxMp,
-                attackDamage: profile.attackDamage,
-                potions: profile.potions !== undefined ? profile.potions : 0,
+                mp: CONFIG.hero.maxMp,
+                maxMp: CONFIG.hero.maxMp,
+                atb: 0,
                 defending: false,
-                // Phase 9/10 progression (persists across battles via profile)
                 level: profile.level,
                 experience: profile.experience,
-                gold: profile.gold
+                gold: profile.gold,
+                attackDamage: profile.attackDamage
             },
-            enemies: CONFIG.enemies.filter(function (e) {
-                return !activeEnemyIds || activeEnemyIds.indexOf(e.id) !== -1;
-            }).map(function (e) {
-                return { id: e.id, name: e.name, hp: e.maxHp, maxHp: e.maxHp };
-            }),
+            enemies: enemies,
             turnCount: 0,
-            // Rewards granted on victory (computed in showVictory)
             lastExpGained: 0,
             lastGoldGained: 0,
             leveledUp: false
@@ -105,10 +174,7 @@ var Battle = (function () {
         profile.gold = S.hero.gold;
         profile.maxHp = S.hero.maxHp;
         profile.attackDamage = S.hero.attackDamage;
-        // Phase 12: persistent vitals written back on victory so the next
-        // battle (and the overworld) resume from the hero's current state.
         profile.hp = S.hero.hp;
-        profile.potions = S.hero.potions;
     }
 
     function state() {
@@ -121,9 +187,12 @@ var Battle = (function () {
             heroMaxHp: S.hero.maxHp,
             heroMp: S.hero.mp,
             heroMaxMp: S.hero.maxMp,
-            heroAttackDamage: S.hero.attackDamage,
+            heroAtb: S.hero.atb,
+            atbMax: Chrono ? Chrono.ATB_GAUGE_MAX : 100,
+            heroSpeed: CONFIG.hero.speed,
+            heroPower: heroAttackStats().power,
+            heroMagic: CONFIG.hero.magic,
             defending: S.hero.defending,
-            heroPotions: S.hero.potions,
             turnCount: S.turnCount,
             heroLevel: S.hero.level,
             heroExperience: S.hero.experience,
@@ -145,7 +214,12 @@ var Battle = (function () {
         return document.getElementById(id);
     }
 
+    // Floating damage/heal text: rises and fades out over 0.8s (styles.css
+    // float-up animation); the node is removed right after the animation.
     function floatNumber(anchor, text, kind) {
+        if (!anchor) {
+            return;
+        }
         var num = document.createElement('div');
         num.className = 'float-number ' + (kind || 'damage');
         num.textContent = text;
@@ -154,7 +228,7 @@ var Battle = (function () {
             if (num.parentNode) {
                 num.parentNode.removeChild(num);
             }
-        }, 1000);
+        }, CONFIG.floatMs);
     }
 
     function say(text) {
@@ -167,24 +241,16 @@ var Battle = (function () {
         return Math.max(0, Math.min(100, (value / max) * 100)) + '%';
     }
 
-    // Pixel-art SVG silhouettes with glowing red eyes.
-    // Served as fallback art when an enemy sprite image fails to load.
-    function silhouetteSVG(kind) {
-        var eyes = '<circle class="eye" cx="16" cy="18" r="2.2"/><circle class="eye" cx="24" cy="18" r="2.2"/>';
-        var body = '';
-        if (kind === 'goblin') {
-            body =
-                '<path d="M8 30 L4 18 L10 14 L8 8 L14 10 L16 4 L18 10 L24 8 L22 14 L28 18 L24 30 Z" class="sil-body"/>' +
-                '<path d="M10 30 L12 34 L22 34 L24 30 Z" class="sil-body"/>';
-        } else {
-            body =
-                '<path d="M6 26 L10 14 L16 10 L22 12 L28 8 L30 14 L26 16 L28 26 L24 26 L22 18 L16 20 L12 26 Z" class="sil-body"/>' +
-                '<path d="M8 30 L10 33 L14 33 L15 30 Z" class="sil-body"/>';
-            eyes = '<circle class="eye" cx="13" cy="14" r="1.8"/><circle class="eye" cx="19" cy="14" r="1.8"/>';
-        }
+    // Pixel-art goblin silhouette with glowing red eyes (Pass 1 enemy art).
+    function silhouetteSVG() {
         return (
             '<svg viewBox="0 0 32 36" class="sil" preserveAspectRatio="xMidYMid meet">' +
-            '<g class="sil-group">' + body + eyes + '</g></svg>'
+            '<g class="sil-group">' +
+            '<path d="M8 30 L4 18 L10 14 L8 8 L14 10 L16 4 L18 10 L24 8 L22 14 L28 18 L24 30 Z" class="sil-body"/>' +
+            '<path d="M10 30 L12 34 L22 34 L24 30 Z" class="sil-body"/>' +
+            '<circle class="eye" cx="16" cy="18" r="2.2"/>' +
+            '<circle class="eye" cx="24" cy="18" r="2.2"/>' +
+            '</g></svg>'
         );
     }
 
@@ -194,20 +260,9 @@ var Battle = (function () {
         unit.setAttribute('data-index', String(index));
         unit.setAttribute('data-enemy-id', cfg.id);
 
-        // Sprite layer: shows assets/sprites/<id>_battle.png, and falls back
-        // to the styled silhouette if the image fails to load.
         var art = document.createElement('div');
-        art.className = 'enemy-art';
-        art.innerHTML = silhouetteSVG(cfg.art);
-
-        var sprite = document.createElement('img');
-        sprite.className = 'enemy-sprite';
-        sprite.alt = cfg.name;
-        sprite.src = 'assets/sprites/' + cfg.id + '_battle.png';
-        sprite.addEventListener('error', function () {
-            art.classList.add('sprite-failed');
-        });
-        art.appendChild(sprite);
+        art.className = 'enemy-art sil-only';
+        art.innerHTML = silhouetteSVG();
         unit.appendChild(art);
 
         var nameEl = document.createElement('div');
@@ -242,12 +297,25 @@ var Battle = (function () {
         }
 
         // Hero bars
-        el.heroHpFill.style.width = pct(S.hero.hp, S.hero.maxHp);
-        el.heroMpFill.style.width = pct(S.hero.mp, S.hero.maxMp);
-        el.heroHpText.textContent = S.hero.hp + '/' + S.hero.maxHp;
-        el.heroMpText.textContent = S.hero.mp + '/' + S.hero.maxMp;
-        el.heroUnit.classList.toggle('defending', S.hero.defending);
-        el.turnIndicator.classList.toggle('active', S.phase === 'player');
+        if (el.heroHpFill) {
+            el.heroHpFill.style.width = pct(S.hero.hp, S.hero.maxHp);
+            el.heroHpText.textContent = S.hero.hp + '/' + S.hero.maxHp;
+        }
+        if (el.heroMpFill) {
+            el.heroMpFill.style.width = pct(S.hero.mp, S.hero.maxMp);
+            el.heroMpText.textContent = S.hero.mp + '/' + S.hero.maxMp;
+        }
+        if (el.heroAtbFill) {
+            el.heroAtbFill.style.width = pct(S.hero.atb, Chrono ? Chrono.ATB_GAUGE_MAX : 100);
+            el.heroAtbText.textContent = 'ATB ' + Math.floor(S.hero.atb) + '%';
+        }
+        if (el.heroUnit) {
+            el.heroUnit.classList.toggle('defending', S.hero.defending);
+        }
+        if (el.turnIndicator) {
+            el.turnIndicator.classList.toggle('active',
+                S.phase === 'player' || S.phase === 'target');
+        }
 
         if (el.heroLevelText) {
             var expToNext = window.Progression
@@ -261,15 +329,17 @@ var Battle = (function () {
         }
 
         // Enemy units
-        var units = el.enemyRow.querySelectorAll('.enemy-unit');
-        for (var i = 0; i < units.length; i++) {
-            var unit = units[i];
-            var idx = Number(unit.getAttribute('data-index'));
-            var enemy = S.enemies[idx];
-            unit.querySelector('.bar-fill').style.width = pct(enemy.hp, enemy.maxHp);
-            unit.querySelector('.bar-label').textContent = Math.max(0, enemy.hp) + '/' + enemy.maxHp;
-            unit.classList.toggle('defeated', enemy.hp <= 0);
-            unit.classList.toggle('targetable', S.phase === 'target' && enemy.hp > 0);
+        if (el.enemyRow) {
+            var units = el.enemyRow.querySelectorAll('.enemy-unit');
+            for (var i = 0; i < units.length; i++) {
+                var unit = units[i];
+                var idx = Number(unit.getAttribute('data-index'));
+                var enemy = S.enemies[idx];
+                unit.querySelector('.bar-fill').style.width = pct(enemy.hp, enemy.maxHp);
+                unit.querySelector('.bar-label').textContent = Math.max(0, enemy.hp) + '/' + enemy.maxHp;
+                unit.classList.toggle('defeated', enemy.hp <= 0);
+                unit.classList.toggle('targetable', S.phase === 'target' && enemy.hp > 0);
+            }
         }
 
         // Command menu availability
@@ -283,6 +353,34 @@ var Battle = (function () {
     }
 
     // ------------------------------------------------------------------
+    // ATB gauge (speed 14 -> 87.5 gauge points per tick)
+    // ------------------------------------------------------------------
+
+    function startCharge() {
+        S.phase = 'charge';
+        S.hero.atb = 0;
+        render();
+        window.setTimeout(atbTick, CONFIG.atbTickMs);
+    }
+
+    function atbTick() {
+        if (!S || S.phase !== 'charge' || !Chrono) {
+            return;
+        }
+        S.hero.atb = Math.min(Chrono.ATB_GAUGE_MAX,
+            S.hero.atb + Chrono.calculateATBTick(CONFIG.hero.speed));
+        if (S.hero.atb >= Chrono.ATB_GAUGE_MAX) {
+            S.phase = 'player';
+            RetroAudio.playCursor();
+            say('HERO\'s turn!');
+            render();
+            return;
+        }
+        render();
+        window.setTimeout(atbTick, CONFIG.atbTickMs);
+    }
+
+    // ------------------------------------------------------------------
     // Turn flow
     // ------------------------------------------------------------------
 
@@ -292,7 +390,6 @@ var Battle = (function () {
         }
         if (name === 'attack') {
             if (S.phase === 'target') {
-                // A target index was passed programmatically; otherwise wait for click.
                 if (typeof targetIndex === 'number') {
                     doAttack(targetIndex);
                 }
@@ -311,7 +408,7 @@ var Battle = (function () {
             if (S.phase !== 'player') {
                 return;
             }
-            doItem();
+            openItemPanel();
         } else if (name === 'defend') {
             if (S.phase !== 'player') {
                 return;
@@ -326,7 +423,7 @@ var Battle = (function () {
         }
         S.phase = 'target';
         say('Choose a target!');
-        RetroAudio.beep();
+        RetroAudio.playCursor();
         render();
     }
 
@@ -347,89 +444,130 @@ var Battle = (function () {
             return;
         }
         S.phase = 'resolving';
-        var damage = S.hero.attackDamage;
+
+        var atk = heroAttackStats();
+        // Roll the 15% crit decision here and pass it through the engine's
+        // forceCrit hook: the engine doubles the variance-rolled damage, so
+        // a crit cannot be recovered exactly by comparing against a
+        // variance-free base roll.
+        var isCrit = Math.random() < CONFIG.hero.critRate;
+        var damage = Chrono.calculatePhysicalDamage(atk, goblinDefenseStats(),
+            { forceCrit: isCrit });
+
         enemy.hp = Math.max(0, enemy.hp - damage);
 
-        var unit = el.enemyRow.querySelector('[data-index="' + index + '"]');
-        unit.classList.add('slash-hit');
-        window.setTimeout(function () {
-            unit.classList.remove('slash-hit');
-        }, 450);
+        // Hero dashes forward, then returns.
+        if (el.heroUnit) {
+            el.heroUnit.classList.add('dashing');
+            window.setTimeout(function () {
+                el.heroUnit.classList.remove('dashing');
+            }, CONFIG.dashMs);
+        }
 
-        RetroAudio.slash();
-        floatNumber(unit, '-' + damage, 'damage');
-        say('HERO attacks ' + enemy.name + '!');
+        var unit = el.enemyRow.querySelector('[data-index="' + index + '"]');
+        if (unit) {
+            unit.classList.add('slash-hit');
+            window.setTimeout(function () {
+                unit.classList.remove('slash-hit');
+            }, CONFIG.slashHitMs);
+        }
+
+        RetroAudio.playSlash();
+        floatNumber(unit, isCrit ? 'CRIT! -' + damage : '-' + damage,
+            isCrit ? 'crit' : 'damage');
+        say('HERO attacks ' + enemy.name + (isCrit ? ' — CRITICAL HIT!' : '!'));
         render();
-        window.setTimeout(checkAfterPlayerAction, 350);
+        window.setTimeout(checkAfterPlayerAction, CONFIG.actionDelayMs);
     }
 
     function doMagic() {
         if (S.hero.mp < CONFIG.magic.cost) {
             say('Not enough MP!');
-            RetroAudio.beep();
+            RetroAudio.playCursor();
             return;
         }
         S.phase = 'resolving';
         S.hero.mp -= CONFIG.magic.cost;
 
-        el.arena.classList.add('magic-flash');
-        window.setTimeout(function () {
-            el.arena.classList.remove('magic-flash');
-        }, 450);
+        if (el.arena) {
+            el.arena.classList.add('magic-flash');
+            window.setTimeout(function () {
+                el.arena.classList.remove('magic-flash');
+            }, 450);
+        }
 
-        RetroAudio.sparkle();
+        RetroAudio.playMagic();
         for (var i = 0; i < S.enemies.length; i++) {
             var enemy = S.enemies[i];
             if (enemy.hp <= 0) {
                 continue;
             }
-            enemy.hp = Math.max(0, enemy.hp - CONFIG.magic.damage);
+            var damage = Chrono.calculateMagicDamage(
+                heroAttackStats(), goblinDefenseStats(), CONFIG.magic.power);
+            enemy.hp = Math.max(0, enemy.hp - damage);
             var unit = el.enemyRow.querySelector('[data-index="' + i + '"]');
-            floatNumber(unit, '-' + CONFIG.magic.damage, 'magic');
+            floatNumber(unit, '-' + damage, 'magic');
         }
         say('HERO casts ' + CONFIG.magic.name + '!');
         render();
-        window.setTimeout(checkAfterPlayerAction, 350);
+        window.setTimeout(checkAfterPlayerAction, CONFIG.actionDelayMs);
+    }
+
+    // ITEM: the Arcane Crystal relic restores 50 HP. The panel (with the
+    // relic icon) confirms the use; CANCEL backs out without a turn.
+    function openItemPanel() {
+        if (S.hero.hp >= S.hero.maxHp) {
+            say('HP is already full!');
+            RetroAudio.playCursor();
+            return;
+        }
+        if (el.itemPanel) {
+            el.itemPanel.classList.remove('hidden');
+            say('Use the ' + CONFIG.relic.name + '?');
+            RetroAudio.playCursor();
+            render();
+        }
+    }
+
+    function doItemUse() {
+        if (!S || S.phase !== 'player') {
+            return;
+        }
+        if (S.hero.hp >= S.hero.maxHp) {
+            say('HP is already full!');
+            RetroAudio.playCursor();
+            return;
+        }
+        var healed = Math.min(CONFIG.relic.heal, S.hero.maxHp - S.hero.hp);
+        S.hero.hp += healed;
+        S.phase = 'resolving';
+
+        if (el.itemPanel) {
+            el.itemPanel.classList.add('hidden');
+        }
+        RetroAudio.playHeal();
+        floatNumber(el.heroUnit, '+' + healed, 'heal');
+        say('HERO uses the ' + CONFIG.relic.name + '! Restores ' + healed + ' HP.');
+        render();
+        window.setTimeout(checkAfterPlayerAction, CONFIG.actionDelayMs);
+    }
+
+    function doItemCancel() {
+        if (el.itemPanel) {
+            el.itemPanel.classList.add('hidden');
+        }
+        if (S && S.phase === 'player') {
+            say('HERO\'s turn!');
+        }
     }
 
     function doDefend() {
         S.phase = 'resolving';
-        S.hero.defending = true;
+        S.hero.defending = true; // -50% incoming damage for 1 turn
         say('HERO braces for impact! (damage halved this turn)');
-        RetroAudio.beep();
+        RetroAudio.playCursor();
         render();
-        window.setTimeout(endPlayerTurn, 350);
-    }
-
-    /*
-     * ITEM command (Phase 12): uses a potion from the persistent inventory,
-     * same immediate-effect pattern as MAGIC. With no potions (or no
-     * progression module) it only shows a message and consumes no turn.
-     */
-    function doItem() {
-        if (!S.hero.potions || S.hero.potions <= 0) {
-            say('No potions!');
-            RetroAudio.beep();
-            return;
-        }
-        if (!window.Progression || !window.Progression.usePotion) {
-            say('No potions!');
-            RetroAudio.beep();
-            return;
-        }
-        var before = S.hero.hp;
-        if (!window.Progression.usePotion(S.hero)) {
-            say('HP is already full!');
-            RetroAudio.beep();
-            return;
-        }
-        var healed = S.hero.hp - before;
-        S.phase = 'resolving';
-        RetroAudio.drink(); // Phase 12 potion drink tone
-        floatNumber(el.heroUnit, '+' + healed, 'heal');
-        say('HERO drinks a potion! Restores ' + healed + ' HP.');
-        render();
-        window.setTimeout(checkAfterPlayerAction, 350); // consumes the turn
+        window.setTimeout(endPlayerTurn, CONFIG.actionDelayMs);
     }
 
     function checkAfterPlayerAction() {
@@ -446,49 +584,41 @@ var Battle = (function () {
         }
         S.phase = 'enemy';
         S.turnCount += 1;
-        say('The enemies prepare to strike...');
+        say('The goblins snarl and circle...');
         render();
 
+        // Dramatic pause before the enemy strike (0.8s).
         window.setTimeout(function () {
             enemyTurn(0);
-        }, CONFIG.enemyTurnDelayMs);
+        }, CONFIG.enemyPauseMs);
     }
 
     function enemyTurn(index) {
         if (S.phase !== 'enemy') {
             return;
         }
-        var alive = S.enemies.filter(function (e) {
-            return e.hp > 0;
-        });
         if (index >= S.enemies.length) {
             finishEnemyTurn();
             return;
         }
         var enemy = S.enemies[index];
         if (enemy.hp > 0) {
-            // Look up stats by id so filtered encounter rosters stay correct.
-            var cfg = null;
-            for (var c = 0; c < CONFIG.enemies.length; c++) {
-                if (CONFIG.enemies[c].id === enemy.id) {
-                    cfg = CONFIG.enemies[c];
-                    break;
-                }
-            }
-            var dmg = cfg.atkMin +
-                Math.floor(Math.random() * (cfg.atkMax - cfg.atkMin + 1));
+            var damage = Chrono.calculatePhysicalDamage(
+                goblinAttackStats(), heroDefenseStats());
             if (S.hero.defending) {
-                dmg = Math.max(1, Math.floor(dmg / 2));
+                damage = Math.max(1, Math.floor(damage / 2));
             }
-            S.hero.hp = Math.max(0, S.hero.hp - dmg);
+            S.hero.hp = Math.max(0, S.hero.hp - damage);
 
-            el.frame.classList.add('screen-shake');
-            window.setTimeout(function () {
-                el.frame.classList.remove('screen-shake');
-            }, 350);
+            if (el.frame) {
+                el.frame.classList.add('screen-shake');
+                window.setTimeout(function () {
+                    el.frame.classList.remove('screen-shake');
+                }, 350);
+            }
 
-            floatNumber(el.heroUnit, '-' + dmg, 'damage');
-            say(enemy.name + ' attacks HERO for ' + dmg + '!');
+            floatNumber(el.heroUnit, '-' + damage, 'damage');
+            say(enemy.name + ' strikes HERO for ' + damage + '!');
             render();
 
             if (S.hero.hp <= 0) {
@@ -506,9 +636,7 @@ var Battle = (function () {
             return;
         }
         S.hero.defending = false;
-        S.phase = 'player';
-        say('HERO\'s turn!');
-        render();
+        startCharge();
     }
 
     // ------------------------------------------------------------------
@@ -521,86 +649,69 @@ var Battle = (function () {
         }).length;
     }
 
-    function computeRewards() {
-        var exp = 0;
-        var gold = 0;
-        for (var i = 0; i < S.enemies.length; i++) {
-            var cfg = null;
-            for (var c = 0; c < CONFIG.enemies.length; c++) {
-                if (CONFIG.enemies[c].id === S.enemies[i].id) {
-                    cfg = CONFIG.enemies[c];
-                    break;
-                }
-            }
-            if (cfg) {
-                exp += cfg.expReward || 0;
-                gold += cfg.goldReward || 0;
-            }
-        }
-        return { exp: exp, gold: gold };
-    }
-
     function showVictory() {
         S.phase = 'victory';
 
-        var rewards = computeRewards();
-        S.lastExpGained = rewards.exp;
-        S.lastGoldGained = rewards.gold;
-
-        S.hero.gold += rewards.gold;
+        S.lastExpGained = CONFIG.victoryRewards.exp;
+        S.lastGoldGained = CONFIG.victoryRewards.gold;
+        S.hero.gold += CONFIG.victoryRewards.gold;
 
         var result = { leveledUp: false, levelsGained: 0 };
         if (window.Progression) {
-            result = window.Progression.gainExperience(S.hero, rewards.exp);
+            result = window.Progression.gainExperience(S.hero, CONFIG.victoryRewards.exp);
         } else {
-            S.hero.experience += rewards.exp;
+            S.hero.experience += CONFIG.victoryRewards.exp;
         }
         S.leveledUp = result.leveledUp;
 
         syncProfileFromHero();
 
-        var overlayLine = el.victoryScreen.querySelector('.result-line');
-        if (overlayLine) {
-            var line = '+' + rewards.exp + ' EXP and +' + rewards.gold + ' Gold';
-            if (result.leveledUp) {
-                line += ' - LEVEL UP! Now Lv ' + S.hero.level + '!';
+        if (el.victoryScreen) {
+            var overlayLine = el.victoryScreen.querySelector('.result-line');
+            if (overlayLine) {
+                var line = '+' + CONFIG.victoryRewards.exp + ' EXP and +' +
+                    CONFIG.victoryRewards.gold + ' Gold';
+                if (result.leveledUp) {
+                    line += ' — LEVEL UP! Now Lv ' + S.hero.level + '!';
+                }
+                overlayLine.textContent = line;
             }
-            overlayLine.textContent = line;
+            el.victoryScreen.classList.remove('hidden');
         }
 
-        el.victoryScreen.classList.remove('hidden');
-        RetroAudio.fanfare();
+        RetroAudio.playVictory();
         say(result.leveledUp
-            ? 'VICTORY! You reached Lv ' + S.hero.level + '! (+' + rewards.exp + ' EXP, +' + rewards.gold + 'G)'
-            : 'The forest falls silent... VICTORY! (+' + rewards.exp + ' EXP, +' + rewards.gold + 'G)');
+            ? 'VICTORY! You reached Lv ' + S.hero.level + '!'
+            : 'The forest falls silent... VICTORY!');
         render();
     }
 
     function showDefeat() {
         S.phase = 'defeat';
-        // Fairness rule: a defeated hero does not carry a battered HP
-        // into the retried battle — restore the persistent profile to
-        // full HP before the RETRY button starts the next attempt.
         if (profile) {
             profile.hp = profile.maxHp;
         }
-        el.defeatScreen.classList.remove('hidden');
+        if (el.defeatScreen) {
+            el.defeatScreen.classList.remove('hidden');
+        }
         RetroAudio.gameOver();
         say('HERO has fallen...');
         render();
     }
 
     function playAgain() {
-        el.victoryScreen.classList.add('hidden');
-        el.defeatScreen.classList.add('hidden');
+        if (el.victoryScreen) {
+            el.victoryScreen.classList.add('hidden');
+        }
+        if (el.defeatScreen) {
+            el.defeatScreen.classList.add('hidden');
+        }
+        if (el.itemPanel) {
+            el.itemPanel.classList.add('hidden');
+        }
         start();
     }
 
-    /*
-     * Phase 12: the live hero profile (gold, potions, hp, progression) so
-     * the overworld HUD and shop can transact against the same object the
-     * battle engine uses. Lazily creates the profile.
-     */
     function getProfile() {
         if (!profile) {
             profile = freshProfile();
@@ -619,6 +730,8 @@ var Battle = (function () {
         el.heroUnit = $('hero-unit');
         el.heroHpFill = $('hero-hp-fill');
         el.heroMpFill = $('hero-mp-fill');
+        el.heroAtbFill = $('hero-atb-fill');
+        el.heroAtbText = $('hero-atb-text');
         el.heroHpText = $('hero-hp-text');
         el.heroMpText = $('hero-mp-text');
         el.heroLevelText = $('hero-level-text');
@@ -627,6 +740,9 @@ var Battle = (function () {
         el.message = $('battle-message');
         el.victoryScreen = $('victory-screen');
         el.defeatScreen = $('defeat-screen');
+        el.itemPanel = $('item-panel');
+        el.itemUse = $('item-use');
+        el.itemCancel = $('item-cancel');
         el.commands = {
             attack: $('cmd-attack'),
             magic: $('cmd-magic'),
@@ -652,6 +768,12 @@ var Battle = (function () {
         el.commands.defend.addEventListener('click', function () {
             command('defend');
         });
+        if (el.itemUse) {
+            el.itemUse.addEventListener('click', doItemUse);
+        }
+        if (el.itemCancel) {
+            el.itemCancel.addEventListener('click', doItemCancel);
+        }
         $('victory-again').addEventListener('click', playAgain);
         $('defeat-retry').addEventListener('click', playAgain);
     }
@@ -659,27 +781,26 @@ var Battle = (function () {
     function start() {
         S = freshState();
         el.enemyRow.innerHTML = '';
-        CONFIG.enemies
-            .filter(function (e) {
-                return !activeEnemyIds || activeEnemyIds.indexOf(e.id) !== -1;
-            })
-            .forEach(function (cfg, i) {
-                el.enemyRow.appendChild(buildEnemyUnit(cfg, i));
-            });
-        el.victoryScreen.classList.add('hidden');
-        el.defeatScreen.classList.add('hidden');
-        if (activeEnemyIds && S.enemies.length === 1) {
-            say('A wild ' + S.enemies[0].name + ' blocks the path!');
-        } else {
-            say('A Forest Goblin and a Shadow Wolf block the path!');
+        for (var i = 0; i < CONFIG.enemyCount; i++) {
+            el.enemyRow.appendChild(buildEnemyUnit(CONFIG.goblin, i));
         }
+        if (el.victoryScreen) {
+            el.victoryScreen.classList.add('hidden');
+        }
+        if (el.defeatScreen) {
+            el.defeatScreen.classList.add('hidden');
+        }
+        if (el.itemPanel) {
+            el.itemPanel.classList.add('hidden');
+        }
+        say('Two Forest Goblins block the path!');
         render();
+        startCharge();
     }
 
-    function init(enemyId) {
-        activeEnemyIds = enemyId ? [enemyId] : null;
+    function init() {
         cacheDom();
-        if (!el.arena) {
+        if (!el.arena || !Chrono) {
             return false;
         }
         wire();

@@ -307,6 +307,13 @@ canvas#game-canvas {
     display: none;
 }
 
+/* Pass 1: goblins render as glowing-eye silhouettes (no sprite layer). */
+.enemy-art.sil-only .sil {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
 .enemy-art.sprite-failed .enemy-sprite {
     display: none;
 }
@@ -450,6 +457,21 @@ canvas#game-canvas {
     background: linear-gradient(180deg, #5ab8ff 0%, #2a5ecc 100%);
 }
 
+/* --- ATB gauge (speed 14 hero) --- */
+
+.bar.atb {
+    height: 8px;
+}
+
+.bar-fill.atb-fill {
+    background: linear-gradient(180deg, #ffe08a 0%, #c8a24a 100%);
+    transition: width 0.15s steps(4);
+}
+
+.bar.atb .bar-text {
+    font-size: 7px;
+}
+
 .bar-text {
     position: absolute;
     inset: 0;
@@ -568,7 +590,7 @@ canvas#game-canvas {
     letter-spacing: 0.05em;
     text-shadow: 2px 2px 0 #000, 0 0 8px rgba(0, 0, 0, 0.8);
     pointer-events: none;
-    animation: float-up 1s steps(10) forwards;
+    animation: float-up 0.8s steps(8) forwards;
 }
 
 .float-number.damage {
@@ -583,10 +605,30 @@ canvas#game-canvas {
     color: #63d64a;
 }
 
+/* Golden critical hit text */
+.float-number.crit {
+    color: #ffd76a;
+    font-size: clamp(16px, 3vw, 26px);
+    text-shadow: 2px 2px 0 #000, 0 0 12px rgba(255, 215, 106, 0.65);
+}
+
 @keyframes float-up {
     0% { opacity: 0; margin-top: 6px; }
     15% { opacity: 1; }
     100% { opacity: 0; margin-top: -34px; }
+}
+
+/* --- Hero dash (ATTACK) --- */
+
+.hero-unit.dashing {
+    animation: hero-dash 0.5s steps(6);
+}
+
+@keyframes hero-dash {
+    0% { transform: translateX(0); }
+    35% { transform: translateX(-52px); }
+    55% { transform: translateX(-48px); }
+    100% { transform: translateX(0); }
 }
 
 /* --- Attack slash effect --- */

@@ -117,6 +117,7 @@ function load(file) {
 }
 load('progression.js');
 load('audio.js');
+load('chrono_battle_engine.js');
 load('battle.js');
 
 const Progression = sandbox.window.Progression || sandbox.Progression;
@@ -206,7 +207,7 @@ let s = Battle.state();
 eq(s.heroLevel, 1, 'battle hero starts at level 1');
 eq(s.heroExperience, 0, 'battle hero starts at 0 EXP');
 eq(s.heroGold, 0, 'battle hero starts at 0 gold');
-eq(s.heroAttackDamage, 28, 'battle hero starts with base attackDamage 28');
+eq(s.heroPower, 14, 'battle hero starts with base power 14 (chrono formula)');
 
 // Win the battle by grinding attacks.
 let guard = 0;
@@ -225,8 +226,8 @@ s = Battle.state();
 eq(s.phase, 'victory', 'battle reaches victory');
 
 // Goblin (25 EXP, 18G) + Wolf (20 EXP, 20G... wait wolf=12G) = 45 EXP, 30 G
-eq(s.lastExpGained, 45, 'victory awards 45 EXP total (25 goblin + 20 wolf)');
-eq(s.lastGoldGained, 30, 'victory awards 30 gold total (18 goblin + 12 wolf)');
+eq(s.lastExpGained, 45, 'victory awards the fixed Pass 1 reward: 45 EXP');
+eq(s.lastGoldGained, 30, 'victory awards the fixed Pass 1 reward: 30 gold');
 eq(s.heroExperience, 45, 'hero experience updated to 45');
 eq(s.heroGold, 30, 'hero gold updated to 30');
 
@@ -234,7 +235,7 @@ eq(s.heroGold, 30, 'hero gold updated to 30');
 eq(s.heroLevel, 2, '45 EXP triggers level-up to Lv2');
 eq(s.leveledUp, true, 'leveledUp flag set on victory state');
 eq(s.heroMaxHp, 125, 'level-up raised maxHp 120 -> 125');
-eq(s.heroAttackDamage, 30, 'level-up raised attackDamage 28 -> 30 (for next battle)');
+eq(s.heroPower, 16, 'level-up raised hero power 14 -> 16 (for next battle)');
 
 // Victory overlay line mentions EXP, Gold, and LEVEL UP
 const overlayLine = registry['victory-screen'].querySelector('.result-line');
@@ -250,13 +251,14 @@ ok(registry['hero-gold-text'].textContent.indexOf('30 G') !== -1, 'HUD gold text
 
 // playAgain resets the BATTLE but the hero keeps progression
 Battle.playAgain();
+flush(); // let the speed-14 ATB gauge recharge the fresh battle
 s = Battle.state();
 eq(s.phase, 'player', 'playAgain resets phase to player');
 eq(s.heroLevel, 2, 'progression persists across battles: still Lv2');
 eq(s.heroExperience, 45, 'progression persists: still 45 EXP');
 eq(s.heroGold, 30, 'progression persists: still 30 gold');
 eq(s.heroMaxHp, 125, 'progression persists: maxHp stays 125');
-eq(s.heroAttackDamage, 30, 'leveled-up attackDamage persists (30) into the next battle');
+eq(s.heroPower, 16, 'leveled-up power persists (16) into the next battle');
 
 // Win a second battle -> more EXP, eventually another level-up
 let guard2 = 0;
