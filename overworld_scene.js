@@ -7,7 +7,11 @@
  * logical player state. No game logic lives here.
  *
  * Public API (window.OverworldScene):
- *   initOverworld(container)  build the tile grid + hero marker and wire input
+ *   initOverworld(container, entry?)
+ *                              build the tile grid + hero marker and wire
+ *                              input; entry (a Phase 15 save payload, or
+ *                              null) starts the hero at the saved map and
+ *                              tile through the warp rebuild path
  *   refreshOverworld()        re-sync the hero marker from overworld state
  *   startEncounter(enemyId)   pause input and hand control to the battle
  *                             scene for an overworld encounter (the rAF loop
@@ -58,6 +62,7 @@ var OverworldScene = (function () {
     var wired = false;
     var loopStarted = false;
     var victoryReturnWired = false;
+    var saveFlashTimer = null;              // Phase 15: HUD save-flash hide timer
 
     // ------------------------------------------------------------------
     // DOM construction
@@ -237,6 +242,7 @@ var OverworldScene = (function () {
         U.paused = false;
         showScene('overworld');
         refreshOverworld(); // hero is restored to the tile he was standing on
+        autosave(); // Phase 15: victory rewards are already in the profile
     }
 
     // Swap the board's grid and NPC markers for the current map's. The
@@ -282,6 +288,7 @@ var OverworldScene = (function () {
             rebuildMapDom();
             refreshOverworld();
             updateHud();
+            autosave(); // Phase 15: persist the new map and position
             if (window.RetroAudio && typeof window.RetroAudio.playWarp === 'function') {
                 window.RetroAudio.playWarp();
             }
@@ -331,6 +338,92 @@ var OverworldScene = (function () {
         if (U.hudMap) {
             var cfg = window.Overworld.getMapConfig(U.player.mapId);
             U.hudMap.textContent = cfg ? cfg.name : 'FOREST CLEARING';
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Phase 15: autosave (SaveSystem) and the HUD save flash
+    // ------------------------------------------------------------------
+
+    /*
+     * Best-effort autosave at key beats: battle-victory return, map
+     * warp, shop purchase. Storage failures (private mode) never
+     * interrupt gameplay; the defeat-retry fairness path (free HP
+     * restore) deliberately never passes through here, so that state
+     * is never persisted.
+     */
+    function autosave() {
+        try {
+            if (!U || !U.player || !window.SaveSystem || !window.SaveSystem.save) {
+                return;
+            }
+            var profile = getHeroProfile();
+            if (!profile) {
+                return;
+            }
+            var payload = {
+                version: 1,
+                profile: {
+                    level: profile.level,
+                    exp: profile.experience,
+                    gold: profile.gold,
+                    hp: profile.hp,
+                    maxHp: profile.maxHp,
+                    potions: profile.potions
+                },
+                mapId: U.player.mapId,
+                x: U.player.x,
+                y: U.player.y,
+                savedAt: Date.now()
+            };
+            if (window.SaveSystem.save(payload)) {
+                showSaveFlash();
+            }
+        } catch (e) {
+            // Storage is best-effort; gameplay continues regardless.
+        }
+    }
+
+    // Small "GAME SAVED" flash appended to the HUD, visible ~1 second.
+    // The element is built lazily (and styled inline) so no markup or
+    // stylesheet change is needed for this feature.
+    function showSaveFlash() {
+        if (!U) {
+            return;
+        }
+        if (!U.saveFlash) {
+            var host = U.hudMap ? U.hudMap.parentNode : null;
+            if (!host && U.hudHp) {
+                host = U.hudHp.parentNode;
+            }
+            if (!host) {
+                return; // headless environments without a rendered HUD
+            }
+            var flash = document.createElement('span');
+            flash.id = 'hud-save-flash';
+            flash.className = 'hud-save-flash hidden';
+            flash.textContent = 'GAME SAVED';
+            flash.style.marginLeft = '8px';
+            flash.style.padding = '1px 6px';
+            flash.style.fontSize = '12px';
+            flash.style.color = '#8ee06e';
+            flash.style.background = 'rgba(0, 0, 0, 0.55)';
+            flash.style.border = '1px solid #8ee06e';
+            flash.style.borderRadius = '4px';
+            host.appendChild(flash);
+            U.saveFlash = flash;
+        }
+        U.saveFlash.classList.remove('hidden');
+        if (saveFlashTimer !== null && window.clearTimeout) {
+            window.clearTimeout(saveFlashTimer);
+        }
+        if (window.setTimeout) {
+            saveFlashTimer = window.setTimeout(function () {
+                saveFlashTimer = null;
+                if (U && U.saveFlash) {
+                    U.saveFlash.classList.add('hidden');
+                }
+            }, 1000);
         }
     }
 
@@ -401,6 +494,7 @@ var OverworldScene = (function () {
             if (window.RetroAudio) {
                 RetroAudio.buy(); // shop purchase chime
             }
+            autosave(); // Phase 15: persist the new gold/potion counts
         } else if (window.RetroAudio) {
             RetroAudio.beep(); // failed purchase
         }
@@ -537,7 +631,7 @@ var OverworldScene = (function () {
     // Init
     // ------------------------------------------------------------------
 
-    function initOverworld(container) {
+    function initOverworld(container, entry) {
         if (!container || !window.Overworld) {
             return null;
         }
@@ -590,6 +684,22 @@ var OverworldScene = (function () {
         };
 
         wireInput();
+        // Phase 15 Continue: a saved entry swaps the hero onto the saved
+        // map and tile through the same rebuild a warp uses (fresh grace
+        // period included), never a parallel bootstrap. Unknown maps keep
+        // the default forest start.
+        if (entry && window.Overworld.getMapConfig(entry.mapId)) {
+            var cfg = window.Overworld.getMapConfig(entry.mapId);
+            U.player = window.Overworld.createPlayerState(
+                window.Overworld.buildMap(entry.mapId),
+                entry.x,
+                entry.y,
+                U.player.facing,
+                cfg.npcs,
+                entry.mapId
+            );
+            rebuildMapDom();
+        }
         refreshOverworld();
         fitBoard();
         if (window.addEventListener) {

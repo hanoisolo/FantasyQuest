@@ -5,6 +5,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>FantasyQuest</title>
     <link rel="stylesheet" href="styles.css">
+    <style>
+        /* Phase 15: title menu (NEW GAME / CONTINUE) */
+        .title-menu {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+            margin-top: 14px;
+        }
+        .title-menu .btn:disabled {
+            opacity: 0.45;
+            cursor: not-allowed;
+        }
+    </style>
 </head>
 <body>
     <div id="game-shell">
@@ -33,7 +47,13 @@
                         </div>
                     </div>
 
-                    <p class="hint" id="title-hint">CLICK / TAP OR PRESS SPACE / ENTER TO CONTINUE</p>
+                    <p class="hint" id="title-hint">CLICK / TAP OR PRESS SPACE / ENTER TO START</p>
+
+                    <!-- Phase 15: NEW GAME / CONTINUE start menu -->
+                    <div class="title-menu" id="title-menu">
+                        <button type="button" class="btn" id="title-new-game">NEW GAME</button>
+                        <button type="button" class="btn" id="title-continue">CONTINUE</button>
+                    </div>
                 </div>
             </div>
 
@@ -126,6 +146,8 @@
     <script src="battle.js"></script>
     <script src="overworld.js"></script>
     <script src="overworld_scene.js"></script>
+    <script src="save.js"></script>
+    <script src="title_scene.js"></script>
     <script>
         (function () {
             'use strict';
@@ -173,7 +195,7 @@
                     }
                 }
 
-                function transition(name) {
+                function transition(name, entrySave) {
                     if (flash) {
                         flash.classList.remove('go');
                         // Force a reflow so the animation can restart.
@@ -190,7 +212,8 @@
                         }
                         if (name === 'overworld' && window.OverworldScene) {
                             window.OverworldScene.initOverworld(
-                                document.getElementById('overworld-container'));
+                                document.getElementById('overworld-container'),
+                                entrySave || null);
                         }
                     }, 130);
                 }
@@ -206,28 +229,57 @@
             var titleScene = document.getElementById('scene-title');
             var titleHandled = false;
 
-            function startGame() {
-                if (Scene.name() !== 'title' || titleHandled) {
-                    return;
-                }
+            function leaveTitle() {
                 titleHandled = true;
                 if (window.RetroAudio) {
                     RetroAudio.playCursor();
                 }
-                Scene.transition('overworld');
                 titleScene.removeEventListener('click', startGame);
                 titleScene.removeEventListener('touchstart', startGame);
+            }
+
+            function startGame() {
+                if (Scene.name() !== 'title' || titleHandled) {
+                    return;
+                }
+                leaveTitle();
+                Scene.transition('overworld');
             }
 
             titleScene.addEventListener('click', startGame);
             titleScene.addEventListener('touchstart', startGame, { passive: true });
             document.addEventListener('keydown', function (event) {
+                // Keyboard-activating a focused title-menu button (Enter /
+                // Space) must run the button's own action, not the generic
+                // title start: return without preventDefault so the native
+                // button activation fires.
+                if (event.target && event.target.closest && event.target.closest('.title-menu')) {
+                    return;
+                }
                 if (Scene.name() === 'title' &&
                     (event.key === ' ' || event.key === 'Enter' ||
                      event.code === 'Space' || event.code === 'Enter' || event.code === 'NumpadEnter')) {
                     event.preventDefault();
                     startGame();
                 }
+            });
+
+            /* -------- Phase 15: NEW GAME / CONTINUE buttons --------
+             * The start decisions live in title_scene.js; this script
+             * injects the scene-manager wiring. */
+            window.TitleScene.init({
+                isTitle: function () {
+                    return Scene.name() === 'title' && !titleHandled;
+                },
+                start: function (entrySave) {
+                    if (Scene.name() !== 'title' || titleHandled) {
+                        return;
+                    }
+                    leaveTitle();
+                    Scene.transition('overworld', entrySave);
+                },
+                newGameBtn: document.getElementById('title-new-game'),
+                continueBtn: document.getElementById('title-continue')
             });
         })();
     </script>

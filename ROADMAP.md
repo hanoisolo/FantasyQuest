@@ -86,17 +86,13 @@ Add multiple enemy support, requiring the player to select a target before attac
 
 
 
-Phase 15: Save and Load System
+Phase 15: Save and Load System [DONE]
 
-
+Status note: progress now autosaves to localStorage under the key fantasyquest_save_v1 — on every battle-victory return to the map, after each warp, and after each successful shop purchase (a brief GAME SAVED flash confirms it; defeat and the free-HP retry are never persisted). The title screen adds a CONTINUE button (disabled until a save exists) that restores the hero's level/EXP/gold/HP/potions and re-enters the exact saved map and tile through the warp rebuild path. Corrupt, missing, or version-mismatched saves fall back silently to a fresh new game, and starting a new game leaves the old save in place until the new run's first autosave overwrites it.
 
 Use the browser's localStorage API.
 
-
-
 Create a mechanism to write the Player's object (Stats, Inventory, Map coordinates, Current Map) to local storage.
-
-
 
 Add a 'Load Game' option to the initial boot screen.
 

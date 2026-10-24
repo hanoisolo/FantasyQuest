@@ -18,6 +18,9 @@
  *   state()                    snapshot for UI and tests
  *   playAgain()                reset and restart the battle
  *   getProfile()               persistent hero profile (overworld HUD)
+ *   applyProfile(saveProfile)  Phase 15 Continue: write a save's profile
+ *                              fields into the live hero profile -> true;
+ *                              malformed input changes nothing -> false
  */
 var Battle = (function () {
     'use strict';
@@ -795,6 +798,44 @@ var Battle = (function () {
         return profile;
     }
 
+    // Phase 15 Continue: write a save's profile fields into the live hero
+    // profile (and any active battle state) instead of callers mutating
+    // private state. Attack power follows the level curve the level-up
+    // math applies, derived from the base power.
+    function applyProfile(saved) {
+        if (saved === null || typeof saved !== 'object') {
+            return false;
+        }
+        var fields = ['level', 'exp', 'gold', 'hp', 'maxHp', 'potions'];
+        for (var i = 0; i < fields.length; i++) {
+            if (typeof saved[fields[i]] !== 'number' || !isFinite(saved[fields[i]])) {
+                return false;
+            }
+        }
+        if (saved.hp > saved.maxHp) {
+            return false;
+        }
+        var p = getProfile();
+        p.level = saved.level;
+        p.experience = saved.exp;
+        p.gold = saved.gold;
+        p.maxHp = saved.maxHp;
+        p.hp = saved.hp;
+        p.potions = saved.potions;
+        var attackPerLevel = (window.Progression && window.Progression.ATTACK_PER_LEVEL) || 2;
+        p.attackDamage = CONFIG.hero.power + (p.level - 1) * attackPerLevel;
+        if (S) {
+            S.hero.level = p.level;
+            S.hero.experience = p.experience;
+            S.hero.gold = p.gold;
+            S.hero.maxHp = p.maxHp;
+            S.hero.hp = p.hp;
+            S.hero.attackDamage = p.attackDamage;
+            S.hero.potions = p.potions;
+        }
+        return true;
+    }
+
     // ------------------------------------------------------------------
     // Init
     // ------------------------------------------------------------------
@@ -880,6 +921,7 @@ var Battle = (function () {
         command: command,
         state: state,
         playAgain: playAgain,
-        getProfile: getProfile
+        getProfile: getProfile,
+        applyProfile: applyProfile
     };
 })();
