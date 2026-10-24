@@ -10,7 +10,10 @@
  * full combat reset on PLAY AGAIN / RETRY BATTLE.
  *
  * Public API (window.Battle):
- *   init()                     wire the battle scene (idempotent)
+ *   init(enemyId)               wire the battle scene (idempotent);
+ *                              enemyId ('goblin' | 'wolf') spawns exactly
+ *                              that one enemy; no argument spawns the
+ *                              default two Forest Goblins
  *   command(name, targetIndex) 'attack' | 'magic' | 'item' | 'defend'
  *   state()                    snapshot for UI and tests
  *   playAgain()                reset and restart the battle
@@ -42,12 +45,24 @@ var Battle = (function () {
             weaponAttack: 3,
             defense: 6,
             magicDefense: 4,
-            critRate: 0
+            critRate: 0,
+            rewards: { exp: 25, gold: 18 }
+        },
+        wolf: {
+            id: 'wolf',
+            name: 'SHADOW WOLF',
+            maxHp: 38,
+            power: 10,
+            weaponAttack: 3,
+            defense: 5,
+            magicDefense: 3,
+            critRate: 0,
+            speed: 16,
+            rewards: { exp: 20, gold: 12 }
         },
         enemyCount: 2,
         magic: { name: 'Arcane Spark', cost: 10, power: 8 },
-        relic: { name: 'ARCANE CRYSTAL', heal: 50 },
-        victoryRewards: { exp: 45, gold: 30 },
+        victoryRewards: { exp: 45, gold: 30 }, // Pass 1 fixed reward, default two-goblin battle
         atbTickMs: 400,
         actionDelayMs: 350,
         enemyPauseMs: 800,     // dramatic pause before the enemy strike
@@ -62,8 +77,13 @@ var Battle = (function () {
     var wired = false;
 
     // Persistent hero profile across battles (level/EXP/gold for the HUD
-    // and the overworld). Pass 1 resets HP/MP to full at every battle start.
+    // and the overworld). Phase 12: HP and potions persist across battles
+    // (MP still refills at every battle start).
     var profile = null;
+
+    // Active encounter roster: null = the default two-goblin battle,
+    // otherwise the enemyId passed to init() ('goblin' | 'wolf').
+    var encounterId = null;
 
     function freshProfile() {
         var p = {
@@ -125,6 +145,30 @@ var Battle = (function () {
         };
     }
 
+    function wolfAttackStats() {
+        return {
+            power: CONFIG.wolf.power,
+            weapon_attack: CONFIG.wolf.weaponAttack,
+            crit_rate: CONFIG.wolf.critRate
+        };
+    }
+
+    function wolfDefenseStats() {
+        return {
+            defense: CONFIG.wolf.defense,
+            magic_defense: CONFIG.wolf.magicDefense
+        };
+    }
+
+    // Per-enemy dispatch: pick the adapter matching the unit on the field.
+    function enemyAttackStats(enemy) {
+        return enemy && enemy.id === 'wolf' ? wolfAttackStats() : goblinAttackStats();
+    }
+
+    function enemyDefenseStats(enemy) {
+        return enemy && enemy.id === 'wolf' ? wolfDefenseStats() : goblinDefenseStats();
+    }
+
     // ------------------------------------------------------------------
     // State
     // ------------------------------------------------------------------
@@ -133,29 +177,38 @@ var Battle = (function () {
         if (!profile) {
             profile = freshProfile();
         }
+        var roster = [];
+        if (encounterId) {
+            roster.push(CONFIG[encounterId] || CONFIG.goblin);
+        } else {
+            for (var r = 0; r < CONFIG.enemyCount; r++) {
+                roster.push(CONFIG.goblin);
+            }
+        }
         var enemies = [];
-        for (var i = 0; i < CONFIG.enemyCount; i++) {
+        for (var i = 0; i < roster.length; i++) {
             enemies.push({
-                id: CONFIG.goblin.id,
-                name: CONFIG.goblin.name,
-                hp: CONFIG.goblin.maxHp,
-                maxHp: CONFIG.goblin.maxHp
+                id: roster[i].id,
+                name: roster[i].name,
+                hp: roster[i].maxHp,
+                maxHp: roster[i].maxHp
             });
         }
         return {
             phase: 'charge', // charge | player | target | resolving | enemy | victory | defeat
             hero: {
                 name: CONFIG.hero.name,
-                hp: profile.maxHp,       // Pass 1: full HP/MP every battle
+                hp: (typeof profile.hp === 'number') ? profile.hp : profile.maxHp,
                 maxHp: profile.maxHp,
-                mp: CONFIG.hero.maxMp,
+                mp: CONFIG.hero.maxMp,     // MP refills every battle
                 maxMp: CONFIG.hero.maxMp,
                 atb: 0,
                 defending: false,
                 level: profile.level,
                 experience: profile.experience,
                 gold: profile.gold,
-                attackDamage: profile.attackDamage
+                attackDamage: profile.attackDamage,
+                potions: (typeof profile.potions === 'number') ? profile.potions : 0
             },
             enemies: enemies,
             turnCount: 0,
@@ -175,6 +228,7 @@ var Battle = (function () {
         profile.maxHp = S.hero.maxHp;
         profile.attackDamage = S.hero.attackDamage;
         profile.hp = S.hero.hp;
+        profile.potions = S.hero.potions;
     }
 
     function state() {
@@ -197,11 +251,27 @@ var Battle = (function () {
             heroLevel: S.hero.level,
             heroExperience: S.hero.experience,
             heroGold: S.hero.gold,
+            heroPotions: S.hero.potions,
             lastExpGained: S.lastExpGained,
             lastGoldGained: S.lastGoldGained,
             leveledUp: S.leveledUp,
             enemies: S.enemies.map(function (e) {
-                return { id: e.id, name: e.name, hp: e.hp, maxHp: e.maxHp, alive: e.hp > 0 };
+                var cfg = CONFIG[e.id] || CONFIG.goblin;
+                return {
+                    id: e.id,
+                    name: e.name,
+                    hp: e.hp,
+                    maxHp: e.maxHp,
+                    alive: e.hp > 0,
+                    stats: {
+                        power: cfg.power,
+                        weaponAttack: cfg.weaponAttack,
+                        defense: cfg.defense,
+                        magicDefense: cfg.magicDefense,
+                        critRate: cfg.critRate,
+                        speed: cfg.speed || 0
+                    }
+                };
             })
         };
     }
@@ -408,7 +478,7 @@ var Battle = (function () {
             if (S.phase !== 'player') {
                 return;
             }
-            openItemPanel();
+            doItem();
         } else if (name === 'defend') {
             if (S.phase !== 'player') {
                 return;
@@ -451,7 +521,7 @@ var Battle = (function () {
         // a crit cannot be recovered exactly by comparing against a
         // variance-free base roll.
         var isCrit = Math.random() < CONFIG.hero.critRate;
-        var damage = Chrono.calculatePhysicalDamage(atk, goblinDefenseStats(),
+        var damage = Chrono.calculatePhysicalDamage(atk, enemyDefenseStats(enemy),
             { forceCrit: isCrit });
 
         enemy.hp = Math.max(0, enemy.hp - damage);
@@ -503,7 +573,7 @@ var Battle = (function () {
                 continue;
             }
             var damage = Chrono.calculateMagicDamage(
-                heroAttackStats(), goblinDefenseStats(), CONFIG.magic.power);
+                heroAttackStats(), enemyDefenseStats(enemy), CONFIG.magic.power);
             enemy.hp = Math.max(0, enemy.hp - damage);
             var unit = el.enemyRow.querySelector('[data-index="' + i + '"]');
             floatNumber(unit, '-' + damage, 'magic');
@@ -513,52 +583,34 @@ var Battle = (function () {
         window.setTimeout(checkAfterPlayerAction, CONFIG.actionDelayMs);
     }
 
-    // ITEM: the Arcane Crystal relic restores 50 HP. The panel (with the
-    // relic icon) confirms the use; CANCEL backs out without a turn.
-    function openItemPanel() {
-        if (S.hero.hp >= S.hero.maxHp) {
-            say('HP is already full!');
-            RetroAudio.playCursor();
-            return;
-        }
-        if (el.itemPanel) {
-            el.itemPanel.classList.remove('hidden');
-            say('Use the ' + CONFIG.relic.name + '?');
-            RetroAudio.playCursor();
-            render();
-        }
-    }
-
-    function doItemUse() {
+    // ITEM: a potion from the hero's inventory. Progression.usePotion heals
+    // 30 HP clamped to maxHp; using one consumes the turn so the enemy acts.
+    // An empty inventory (or full HP) refuses without consuming the turn.
+    function doItem() {
         if (!S || S.phase !== 'player') {
             return;
         }
-        if (S.hero.hp >= S.hero.maxHp) {
-            say('HP is already full!');
+        var hpBefore = S.hero.hp;
+        var used = window.Progression ? window.Progression.usePotion(S.hero) : false;
+        if (!used) {
+            if (S.hero.hp >= S.hero.maxHp) {
+                say('HP is already full!');
+            } else {
+                say('No potions!');
+            }
             RetroAudio.playCursor();
             return;
         }
-        var healed = Math.min(CONFIG.relic.heal, S.hero.maxHp - S.hero.hp);
-        S.hero.hp += healed;
-        S.phase = 'resolving';
-
-        if (el.itemPanel) {
-            el.itemPanel.classList.add('hidden');
+        if (profile) {
+            profile.potions = S.hero.potions;
         }
+        S.phase = 'resolving';
         RetroAudio.playHeal();
+        var healed = S.hero.hp - hpBefore;
         floatNumber(el.heroUnit, '+' + healed, 'heal');
-        say('HERO uses the ' + CONFIG.relic.name + '! Restores ' + healed + ' HP.');
+        say('HERO uses a potion! Restores ' + healed + ' HP.');
         render();
         window.setTimeout(checkAfterPlayerAction, CONFIG.actionDelayMs);
-    }
-
-    function doItemCancel() {
-        if (el.itemPanel) {
-            el.itemPanel.classList.add('hidden');
-        }
-        if (S && S.phase === 'player') {
-            say('HERO\'s turn!');
-        }
     }
 
     function doDefend() {
@@ -604,7 +656,7 @@ var Battle = (function () {
         var enemy = S.enemies[index];
         if (enemy.hp > 0) {
             var damage = Chrono.calculatePhysicalDamage(
-                goblinAttackStats(), heroDefenseStats());
+                enemyAttackStats(enemy), heroDefenseStats());
             if (S.hero.defending) {
                 damage = Math.max(1, Math.floor(damage / 2));
             }
@@ -649,18 +701,35 @@ var Battle = (function () {
         }).length;
     }
 
+    // Encounter battles (init with an enemyId) pay each defeated enemy's
+    // own reward; the default two-goblin battle keeps the fixed Pass 1 reward.
+    function encounterRewards() {
+        if (!encounterId) {
+            return CONFIG.victoryRewards;
+        }
+        var exp = 0;
+        var gold = 0;
+        for (var i = 0; i < S.enemies.length; i++) {
+            var cfg = CONFIG[S.enemies[i].id] || CONFIG.goblin;
+            exp += cfg.rewards.exp;
+            gold += cfg.rewards.gold;
+        }
+        return { exp: exp, gold: gold };
+    }
+
     function showVictory() {
         S.phase = 'victory';
 
-        S.lastExpGained = CONFIG.victoryRewards.exp;
-        S.lastGoldGained = CONFIG.victoryRewards.gold;
-        S.hero.gold += CONFIG.victoryRewards.gold;
+        var rewards = encounterRewards();
+        S.lastExpGained = rewards.exp;
+        S.lastGoldGained = rewards.gold;
+        S.hero.gold += rewards.gold;
 
         var result = { leveledUp: false, levelsGained: 0 };
         if (window.Progression) {
-            result = window.Progression.gainExperience(S.hero, CONFIG.victoryRewards.exp);
+            result = window.Progression.gainExperience(S.hero, rewards.exp);
         } else {
-            S.hero.experience += CONFIG.victoryRewards.exp;
+            S.hero.experience += rewards.exp;
         }
         S.leveledUp = result.leveledUp;
 
@@ -669,8 +738,8 @@ var Battle = (function () {
         if (el.victoryScreen) {
             var overlayLine = el.victoryScreen.querySelector('.result-line');
             if (overlayLine) {
-                var line = '+' + CONFIG.victoryRewards.exp + ' EXP and +' +
-                    CONFIG.victoryRewards.gold + ' Gold';
+                var line = '+' + rewards.exp + ' EXP and +' +
+                    rewards.gold + ' Gold';
                 if (result.leveledUp) {
                     line += ' — LEVEL UP! Now Lv ' + S.hero.level + '!';
                 }
@@ -700,14 +769,21 @@ var Battle = (function () {
     }
 
     function playAgain() {
+        // Phase 11 loop: a victory won from an overworld encounter returns
+        // to the map (the overworld scene owns the return), so the battle
+        // does not restart itself. The standalone default battle keeps its
+        // replay loop; defeat retries always restart the same encounter.
+        if (S && S.phase === 'victory' && encounterId) {
+            if (el.victoryScreen) {
+                el.victoryScreen.classList.add('hidden');
+            }
+            return;
+        }
         if (el.victoryScreen) {
             el.victoryScreen.classList.add('hidden');
         }
         if (el.defeatScreen) {
             el.defeatScreen.classList.add('hidden');
-        }
-        if (el.itemPanel) {
-            el.itemPanel.classList.add('hidden');
         }
         start();
     }
@@ -740,9 +816,6 @@ var Battle = (function () {
         el.message = $('battle-message');
         el.victoryScreen = $('victory-screen');
         el.defeatScreen = $('defeat-screen');
-        el.itemPanel = $('item-panel');
-        el.itemUse = $('item-use');
-        el.itemCancel = $('item-cancel');
         el.commands = {
             attack: $('cmd-attack'),
             magic: $('cmd-magic'),
@@ -768,12 +841,6 @@ var Battle = (function () {
         el.commands.defend.addEventListener('click', function () {
             command('defend');
         });
-        if (el.itemUse) {
-            el.itemUse.addEventListener('click', doItemUse);
-        }
-        if (el.itemCancel) {
-            el.itemCancel.addEventListener('click', doItemCancel);
-        }
         $('victory-again').addEventListener('click', playAgain);
         $('defeat-retry').addEventListener('click', playAgain);
     }
@@ -781,8 +848,8 @@ var Battle = (function () {
     function start() {
         S = freshState();
         el.enemyRow.innerHTML = '';
-        for (var i = 0; i < CONFIG.enemyCount; i++) {
-            el.enemyRow.appendChild(buildEnemyUnit(CONFIG.goblin, i));
+        for (var i = 0; i < S.enemies.length; i++) {
+            el.enemyRow.appendChild(buildEnemyUnit(S.enemies[i], i));
         }
         if (el.victoryScreen) {
             el.victoryScreen.classList.add('hidden');
@@ -790,19 +857,19 @@ var Battle = (function () {
         if (el.defeatScreen) {
             el.defeatScreen.classList.add('hidden');
         }
-        if (el.itemPanel) {
-            el.itemPanel.classList.add('hidden');
-        }
         say('Two Forest Goblins block the path!');
         render();
         startCharge();
     }
 
-    function init() {
+    function init(enemyId) {
         cacheDom();
         if (!el.arena || !Chrono) {
             return false;
         }
+        encounterId = (typeof enemyId === 'string' && CONFIG[enemyId])
+            ? enemyId
+            : null;
         wire();
         start();
         return true;

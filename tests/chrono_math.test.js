@@ -1,9 +1,9 @@
 'use strict';
 /*
  * FantasyQuest Chrono Trigger math engine tests.
- * Run: node test_chrono_math.js
+ * Run: node tests/chrono_math.test.js
  */
-const engine = require('./chrono_battle_engine.js');
+const engine = require('../chrono_battle_engine.js');
 
 let passed = 0;
 let failed = 0;
