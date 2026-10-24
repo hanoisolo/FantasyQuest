@@ -455,6 +455,13 @@ class SceneEl {
   setAttribute(k, v) { this.attrs[k] = String(v); }
   getAttribute(k) { return (k in this.attrs) ? this.attrs[k] : null; }
   appendChild(c) { c.parentNode = this; this.children.push(c); return c; }
+  // Phase 13: rebuildMapDom swaps the grid in place via insertBefore.
+  insertBefore(c, ref) {
+    c.parentNode = this;
+    const i = this.children.indexOf(ref);
+    this.children.splice(i < 0 ? this.children.length : i, 0, c);
+    return c;
+  }
   removeChild(c) { this.children = this.children.filter(x => x !== c); c.parentNode = null; return c; }
   addEventListener(t, fn) { (this.listeners[t] = this.listeners[t] || []).push(fn); }
   removeEventListener(t, fn) {
@@ -501,7 +508,7 @@ const sceneIds = [
   'battle-message', 'victory-screen', 'defeat-screen', 'cmd-attack',
   'cmd-magic', 'cmd-item', 'cmd-defend', 'victory-again', 'defeat-retry',
   'scene-title', 'scene-overworld', 'overworld-shop', 'shop-buy',
-  'shop-leave', 'shop-message', 'hud-hp', 'hud-potions', 'hud-gold'
+  'shop-leave', 'shop-message', 'hud-hp', 'hud-potions', 'hud-gold', 'hud-map'
 ];
 const sceneRegistry = {};
 sceneIds.forEach(id => {
@@ -719,6 +726,396 @@ eq(bs.enemies[0].id, 'wolf', 'RETRY retries the same enemy (wolf)');
 eq(bs.heroHp, bs.heroMaxHp, 'retried encounter starts at full HP');
 ok(sceneRegistry['scene-battle'].classList.contains('active'),
   'retry stays in the battle scene');
+
+// ---- Phase 13 Segment 1: multiple maps and warp tiles ------------------------
+console.log('\n== Phase 13: Maps and warps ==');
+
+// Tile constants extended
+eq(Overworld.TILE.WARP, 4, 'TILE.WARP constant is 4');
+eq(Overworld.TILE.WALL, 5, 'TILE.WALL constant is 5');
+eq(Overworld.TILE.FLOOR, 6, 'TILE.FLOOR constant is 6');
+
+// Registry shape
+ok(typeof Overworld.MAPS === 'object' && Overworld.MAPS !== null, 'MAPS registry is exported');
+eq(Overworld.MAPS.forest.name, 'FOREST CLEARING', 'forest registry entry name');
+eq(Overworld.MAPS.town.name, 'ELDERBROOK', 'town registry entry name');
+eq(Overworld.MAPS.cave.name, 'ECHO HOLLOW', 'cave registry entry name');
+eq(Overworld.getMapConfig('forest').id, 'forest', 'getMapConfig returns the registry entry');
+eq(Overworld.getMapConfig('bogus'), null, 'getMapConfig with unknown id returns null');
+
+// buildMap: all three maps are 20x15; unknown id returns null
+const forestMap = Overworld.buildMap('forest');
+const townMap = Overworld.buildMap('town');
+const caveMap = Overworld.buildMap('cave');
+eq(forestMap.length, 15, 'forest map has 15 rows');
+ok(forestMap.every(r => r.length === 20), 'every forest row is 20 tiles wide');
+eq(townMap.length, 15, 'town map has 15 rows');
+ok(townMap.every(r => r.length === 20), 'every town row is 20 tiles wide');
+eq(caveMap.length, 15, 'cave map has 15 rows');
+ok(caveMap.every(r => r.length === 20), 'every cave row is 20 tiles wide');
+eq(Overworld.buildMap('bogus'), null, 'buildMap with unknown id returns null');
+
+// buildFirstMap still returns the forest map (now with its two warp tiles)
+eq(forestMap[13][8], Overworld.TILE.WARP, 'forest (8,13) is a WARP tile');
+eq(forestMap[2][1], Overworld.TILE.WARP, 'forest (1,2) is a WARP tile');
+eq(Overworld.buildFirstMap()[12][8], Overworld.TILE.PATH, 'player start tile (8,12) is still PATH');
+ok(JSON.stringify(Overworld.buildFirstMap()) === JSON.stringify(forestMap),
+  'buildFirstMap is an alias of buildMap(\'forest\')');
+
+// Town layout: border, PATH cross streets, four building blocks
+eq(townMap[7][8], Overworld.TILE.PATH, 'town crossing (8,7) is PATH');
+eq(townMap[1][8], Overworld.TILE.PATH, 'town column street starts at y=1');
+eq(townMap[13][8], Overworld.TILE.WARP, 'town return warp (8,13) is a WARP tile');
+eq(townMap[12][8], Overworld.TILE.PATH, 'town column street PATH ends at y=12');
+eq(Overworld.isWalkableTile(townMap, 8, 13), true, 'town return warp (8,13) stays walkable');
+eq(townMap[7][1], Overworld.TILE.PATH, 'town row street starts at x=1');
+eq(townMap[7][18], Overworld.TILE.PATH, 'town row street ends at x=18');
+eq(townMap[3][4], Overworld.TILE.TREE, 'north-west building block tile');
+eq(townMap[3][15], Overworld.TILE.TREE, 'north-east building block tile');
+eq(townMap[11][4], Overworld.TILE.TREE, 'south-west building block tile');
+eq(townMap[11][15], Overworld.TILE.TREE, 'south-east building block tile');
+eq(townMap[8][10], Overworld.TILE.GRASS, 'town merchant tile is grass');
+eq(townMap[6][6], Overworld.TILE.GRASS, 'town elder tile is grass');
+
+// Cave layout: WALL border, FLOOR interior, three clusters off the middle lane
+eq(caveMap[0][10], Overworld.TILE.WALL, 'cave north border is WALL');
+eq(caveMap[14][10], Overworld.TILE.WALL, 'cave south border is WALL');
+eq(caveMap[7][2], Overworld.TILE.FLOOR, 'cave middle lane (y=7) stays walkable FLOOR');
+eq(caveMap[7][1], Overworld.TILE.WARP, 'cave return warp (1,7) is a WARP tile');
+eq(Overworld.isWalkableTile(caveMap, 1, 7), true, 'cave return warp (1,7) stays walkable');
+eq(caveMap[3][5], Overworld.TILE.WALL, 'cave cluster A tile');
+eq(caveMap[3][13], Overworld.TILE.WALL, 'cave cluster B tile');
+eq(caveMap[10][9], Overworld.TILE.WALL, 'cave cluster C tile');
+
+// Walkability: WARP is walkable, WALL is not
+eq(Overworld.isWalkableTile(forestMap, 8, 13), true, 'WARP tile (8,13) is walkable');
+eq(Overworld.isWalkableTile(forestMap, 1, 2), true, 'WARP tile (1,2) is walkable');
+eq(Overworld.isWalkableTile(caveMap, 9, 7), true, 'FLOOR is walkable');
+eq(Overworld.isWalkableTile(caveMap, 0, 0), false, 'WALL border is unwalkable');
+eq(Overworld.isWalkableTile(caveMap, 5, 3), false, 'WALL cluster is unwalkable');
+
+// warpAt returns the right targets and null elsewhere
+const forestToTown = Overworld.warpAt('forest', 8, 13);
+eq(forestToTown.toMap, 'town', 'warpAt forest (8,13) targets the town');
+eq(forestToTown.toX, 8, 'warpAt forest (8,13) target x=8');
+eq(forestToTown.toY, 12, 'warpAt forest (8,13) target y=12');
+const forestToCave = Overworld.warpAt('forest', 1, 2);
+eq(forestToCave.toMap, 'cave', 'warpAt forest (1,2) targets the cave');
+eq(forestToCave.toX, 2, 'warpAt forest (1,2) target x=2');
+eq(forestToCave.toY, 7, 'warpAt forest (1,2) target y=7');
+const townToForest = Overworld.warpAt('town', 8, 13);
+eq(townToForest.toMap, 'forest', 'warpAt town (8,13) targets the forest');
+eq(townToForest.toX, 8, 'warpAt town (8,13) target x=8');
+eq(townToForest.toY, 12, 'warpAt town (8,13) target y=12');
+const caveToForest = Overworld.warpAt('cave', 1, 7);
+eq(caveToForest.toMap, 'forest', 'warpAt cave (1,7) targets the forest');
+eq(caveToForest.toX, 2, 'warpAt cave (1,7) target x=2');
+eq(caveToForest.toY, 2, 'warpAt cave (1,7) target y=2');
+eq(Overworld.warpAt('forest', 5, 5), null, 'warpAt returns null on a plain forest tile');
+eq(Overworld.warpAt('town', 8, 12), null, 'warpAt returns null on a plain town tile');
+eq(Overworld.warpAt('bogus', 0, 0), null, 'warpAt with unknown map returns null');
+
+// applyWarp: forest -> town -> forest round trip
+let warpState = Overworld.createPlayerState(forestMap, 8, 12, 'left');
+warpState = Overworld.attemptMove(warpState, 'down', Overworld.MOVE_DURATION_MS);
+eq(warpState.y, 13, 'hero steps down onto the south warp tile');
+const inTown = Overworld.applyWarp(warpState);
+eq(inTown.mapId, 'town', 'applyWarp moves the hero to the town map');
+eq(inTown.x, 8, 'warp lands at town x=8');
+eq(inTown.y, 12, 'warp lands at town y=12');
+eq(inTown.map.length, 15, 'warp rebuilds the target map grid');
+eq(inTown.npcs.length, 2, 'town NPC list loads (merchant + elder)');
+ok(inTown.npcs.some(n => n.id === 'merchant'), 'town has the second merchant');
+eq(Overworld.getMapConfig('town').npcs.find(n => n.id === 'merchant').x, 10,
+  'town merchant stands at x=10');
+eq(Overworld.getMapConfig('town').npcs.find(n => n.id === 'merchant').y, 8,
+  'town merchant stands at y=8');
+eq(Overworld.getMapConfig('town').npcs.find(n => n.id === 'merchant').shop, true,
+  'town merchant carries the shop flag');
+eq(Overworld.getMapConfig('town').npcs.find(n => n.id === 'merchant').dialogue.length, 3,
+  'town merchant has three dialogue lines');
+eq(Overworld.getMapConfig('town').npcs.find(n => n.id === 'elder').dialogue.length, 3,
+  'elder has three dialogue lines');
+eq(inTown.facing, 'down', 'facing is preserved across the warp');
+eq(inTown.moving.active, false, 'warp resets the step movement to idle');
+
+let backToForest = Overworld.attemptMove(inTown, 'down', Overworld.MOVE_DURATION_MS);
+eq(backToForest.y, 13, 'town step lands on the return warp');
+backToForest = Overworld.applyWarp(backToForest);
+eq(backToForest.mapId, 'forest', 'town warp returns to the forest');
+eq(backToForest.x, 8, 'return warp lands at forest x=8');
+eq(backToForest.y, 12, 'return warp lands at forest y=12');
+eq(backToForest.npcs.length, 3, 'forest NPC list is restored');
+
+// applyWarp: forest -> cave -> forest round trip
+let caveWarpState = Overworld.createPlayerState(forestMap, 1, 2, 'down');
+const inCave = Overworld.applyWarp(caveWarpState);
+eq(inCave.mapId, 'cave', 'applyWarp moves the hero to the cave map');
+eq(inCave.x, 2, 'warp lands at cave x=2');
+eq(inCave.y, 7, 'warp lands at cave y=7');
+eq(inCave.npcs.length, 0, 'cave has no NPCs');
+eq(inCave.map[7][1], Overworld.TILE.WARP, 'cave warp exit tile is a visible WARP');
+
+let caveBackState = Overworld.attemptMove(inCave, 'left', Overworld.MOVE_DURATION_MS);
+eq(caveBackState.x, 1, 'cave step lands on the return warp');
+caveBackState = Overworld.applyWarp(caveBackState);
+eq(caveBackState.mapId, 'forest', 'cave warp returns to the forest');
+eq(caveBackState.x, 2, 'cave return warp lands at forest x=2');
+eq(caveBackState.y, 2, 'cave return warp lands at forest y=2');
+const noRewarp = Overworld.applyWarp(caveBackState);
+eq(noRewarp.mapId, 'forest', 'the cave landing tile is not itself a warp (no re-warp)');
+eq(noRewarp.x, 2, 'the no-warp clone keeps the position');
+
+// applyWarp without a warp: unchanged clone; never mutates the input
+const plainState = Overworld.createPlayerState(forestMap, 5, 5, 'down');
+const plainWarp = Overworld.applyWarp(plainState);
+ok(plainWarp !== plainState, 'applyWarp returns a new object even without a warp');
+eq(plainWarp.mapId, 'forest', 'no-warp applyWarp keeps the current map');
+eq(plainWarp.x, 5, 'no-warp applyWarp keeps the position');
+const warpStateBefore = JSON.stringify(warpState);
+Overworld.applyWarp(warpState);
+eq(JSON.stringify(warpState), warpStateBefore, 'applyWarp never mutates the input state');
+
+// applyWarp resets the encounter grace counter
+let gracedState = Overworld.createPlayerState(forestMap, 8, 13, 'down');
+gracedState = Overworld.registerStep(gracedState, seq([0.9]));
+gracedState = Overworld.registerStep(gracedState, seq([0.9]));
+eq(gracedState.encounter.stepsSinceReset, 2, 'steps accumulate before the warp');
+const warpedState = Overworld.applyWarp(gracedState);
+eq(warpedState.encounter.stepsSinceReset, 0, 'applyWarp resets the encounter grace counter');
+eq(warpedState.encounter.triggered, false, 'applyWarp clears the triggered flag');
+eq(warpedState.encounter.lastEnemyId, null, 'applyWarp clears the last enemy id');
+
+// Anti-loop rule: every warp target is walkable and not itself a warp
+[
+  { mapId: 'forest', x: 8, y: 13 },
+  { mapId: 'forest', x: 1, y: 2 },
+  { mapId: 'town', x: 8, y: 13 },
+  { mapId: 'cave', x: 1, y: 7 }
+].forEach(w => {
+  const target = Overworld.warpAt(w.mapId, w.x, w.y);
+  const targetMap = Overworld.buildMap(target.toMap);
+  ok(Overworld.isWalkableTile(targetMap, target.toX, target.toY),
+    'warp (' + w.mapId + ' ' + w.x + ',' + w.y + ') lands on a walkable tile');
+  eq(Overworld.warpAt(target.toMap, target.toX, target.toY), null,
+    'warp (' + w.mapId + ' ' + w.x + ',' + w.y + ') does not land on another warp');
+});
+
+// Per-map encounters: mapId on the player state, default forest
+eq(Overworld.createPlayerState(forestMap, 8, 12).mapId, 'forest',
+  'createPlayerState defaults mapId to forest');
+const townPlayer = Overworld.createPlayerState(
+  townMap, 8, 12, 'down', Overworld.getMapConfig('town').npcs, 'town');
+eq(townPlayer.mapId, 'town', 'createPlayerState records the town map id');
+const townStepState = Overworld.attemptMove(townPlayer, 'left', 0);
+eq(townStepState.mapId, 'town', 'cloneState copies the map id across moves');
+
+// Town (rate 0) never triggers, even with an rng that always rolls 0
+let townSteps = townPlayer;
+const alwaysZero = () => 0;
+for (let i = 0; i < 10; i++) {
+  townSteps = Overworld.registerStep(townSteps, alwaysZero);
+}
+eq(townSteps.encounter.triggered, false,
+  'town (rate 0) never triggers even with rng() always returning 0');
+eq(townSteps.encounter.stepsSinceReset, 10,
+  'town keeps counting steps without triggering battles');
+
+// Cave pool: wolf-weighted 70/30
+eq(Overworld.pickEncounterEnemyFor('cave', () => 0.1), 'wolf',
+  'cave pool: roll 0.1 selects wolf');
+eq(Overworld.pickEncounterEnemyFor('cave', () => 0.9), 'goblin',
+  'cave pool: roll 0.9 selects goblin');
+eq(Overworld.pickEncounterEnemyFor('forest', () => 0.1), 'goblin',
+  'forest pool: roll 0.1 selects goblin');
+eq(Overworld.pickEncounterEnemyFor('forest', () => 0.5), 'wolf',
+  'forest pool: roll at 0.5 selects wolf');
+
+// Cave registerStep: grace then a wolf-weighted trigger
+let caveSteps = Overworld.createPlayerState(
+  caveMap, 2, 7, 'down', Overworld.getMapConfig('cave').npcs, 'cave');
+caveSteps = Overworld.registerStep(caveSteps, seq([0.0]));
+caveSteps = Overworld.registerStep(caveSteps, seq([0.0]));
+caveSteps = Overworld.registerStep(caveSteps, seq([0.0]));
+eq(caveSteps.encounter.triggered, false, 'cave grace steps never trigger');
+caveSteps = Overworld.registerStep(caveSteps, seq([0.1, 0.9]));
+eq(caveSteps.encounter.triggered, true, 'cave roll 0.1 under rate 0.20 triggers');
+eq(caveSteps.encounter.lastEnemyId, 'goblin',
+  'cave enemy pick roll 0.9 selects goblin (wolf-weighted pool)');
+
+// Forest registerStep behaves exactly as before the per-map change
+let forestSteps = Overworld.createPlayerState(forestMap, 8, 12, 'down');
+forestSteps = Overworld.registerStep(forestSteps, seq([0.0]));
+forestSteps = Overworld.registerStep(forestSteps, seq([0.0]));
+forestSteps = Overworld.registerStep(forestSteps, seq([0.0]));
+eq(forestSteps.encounter.triggered, false, 'forest grace steps never trigger');
+forestSteps = Overworld.registerStep(forestSteps, seq([0.1, 0.9]));
+eq(forestSteps.encounter.triggered, true, 'forest roll 0.1 under rate 0.15 triggers');
+eq(forestSteps.encounter.lastEnemyId, 'wolf', 'forest enemy pick roll 0.9 selects wolf');
+
+// ---- Phase 13 Segment 3: scene warps, HUD map name, map-aware handoff ---------
+// Reuses the scene sandbox above: drives the exposed stepLand entry point
+// (the same warp/encounter logic the rAF loop runs in the browser).
+console.log('\n== Phase 13: Scene warps and map flow ==');
+
+ok(typeof SceneOverworld.stepLand === 'function',
+  'stepLand is exposed as the headless entry point');
+ok(typeof SceneOverworld.startEncounter === 'function',
+  'startEncounter is exposed for the battle handoff');
+
+// Fresh scene state on a fresh container (the sandbox Battle profile
+// carries over from the round-trip section above).
+const rt13 = SceneOverworld.initOverworld(new SceneEl('div', 'ow-container'));
+ok(rt13 !== null && typeof rt13 === 'object', 'initOverworld returns the scene state');
+eq(rt13.player.mapId, 'forest', 'scene starts on the forest map');
+eq(sceneRegistry['hud-map'].textContent, 'FOREST CLEARING',
+  'HUD map name starts at the forest');
+
+// Grid tile lookup: buildGrid appends tiles row-major (index = y*20 + x).
+function sceneTileClass(state, x, y) {
+  return state.grid.children[y * 20 + x].className;
+}
+
+// --- Forest -> town: land on the (8,13) warp ---
+ok(sceneTileClass(rt13, 8, 13).indexOf('tile-warp') !== -1,
+  'forest grid renders the warp portal at (8,13)');
+rt13.player = Overworld.attemptMove(rt13.player, 'down', Overworld.MOVE_DURATION_MS);
+eq(rt13.player.y, 13, 'attemptMove with full dt lands on the (8,13) warp');
+SceneOverworld.stepLand();
+eq(rt13.player.mapId, 'town', 'stepLand warps the hero to the town');
+eq(rt13.player.x, 8, 'warp lands at town x=8');
+eq(rt13.player.y, 12, 'warp lands at town y=12');
+eq(rt13.hero.style.left, '256px', 'hero marker lands on the town target tile (left)');
+eq(rt13.hero.style.top, '384px', 'hero marker lands on the town target tile (top)');
+eq(sceneRegistry['hud-map'].textContent, 'ELDERBROOK', 'HUD map name reads ELDERBROOK');
+eq(rt13.player.encounter.stepsSinceReset, 0, 'warp resets the encounter grace counter');
+eq(rt13.paused, false, 'warp keeps overworld input active');
+// The grid was rebuilt: the town's own visible warp portal renders at
+// (8,13), not the forest tile the hero left behind.
+ok(sceneTileClass(rt13, 8, 13).indexOf('tile-warp') !== -1,
+  'grid was rebuilt for the town (warp portal rendered at (8,13))');
+ok(sceneTileClass(rt13, 8, 7).indexOf('tile-path') !== -1,
+  'rebuilt grid shows the town crossing');
+eq(rt13.npcs.length, 2, 'scene follows the town NPC list (merchant + elder)');
+
+// --- Town merchant: real keydown path into the shop ---
+rt13.player = Overworld.createPlayerState(
+  townMap, 9, 8, 'right', Overworld.getMapConfig('town').npcs, 'town');
+SceneOverworld.refreshOverworld();
+pressKey('e');
+ok(rt13.dialogue !== null && rt13.dialogue.open,
+  'interaction opens the town merchant dialogue');
+let scShopGuard = 0;
+while (!rt13.shop && scShopGuard < 10) {
+  scShopGuard++;
+  pressKey('e');
+}
+ok(rt13.shop !== null && rt13.shop.open, 'finishing the dialogue opens the town shop');
+const scShopProfile = SceneBattle.getProfile();
+scShopProfile.gold = 30; // battle purse shortcut for the purchase
+const scGoldBefore = scShopProfile.gold;
+const scPotionsBefore = scShopProfile.potions;
+sceneRegistry['shop-buy'].click();
+eq(scShopProfile.gold, scGoldBefore - 15,
+  'town shop buy spends gold from the live profile');
+eq(scShopProfile.potions, scPotionsBefore + 1,
+  'town shop buy adds a potion to the live profile');
+ok(rt13.shop.lastMessage.indexOf('Potion purchased') !== -1,
+  'shop message confirms the purchase');
+sceneRegistry['shop-leave'].click();
+eq(rt13.shop, null, 'LEAVE closes the town shop');
+
+// --- Town -> forest: step down onto the town warp ---
+rt13.player = Overworld.createPlayerState(
+  townMap, 8, 12, 'down', Overworld.getMapConfig('town').npcs, 'town');
+rt13.player = Overworld.attemptMove(rt13.player, 'down', Overworld.MOVE_DURATION_MS);
+eq(rt13.player.y, 13, 'town step lands on the (8,13) return warp');
+SceneOverworld.stepLand();
+eq(rt13.player.mapId, 'forest', 'town warp returns to the forest');
+eq(rt13.player.x, 8, 'return warp lands at forest x=8');
+eq(rt13.player.y, 12, 'return warp lands at forest y=12');
+eq(sceneRegistry['hud-map'].textContent, 'FOREST CLEARING',
+  'HUD map name is back to the forest');
+eq(rt13.npcs.length, 3, 'scene follows the forest NPC list again');
+
+// --- Forest -> cave via the (1,2) warp ---
+rt13.player = Overworld.createPlayerState(forestMap, 2, 2, 'left');
+rt13.player = Overworld.attemptMove(rt13.player, 'left', Overworld.MOVE_DURATION_MS);
+eq(rt13.player.x, 1, 'forest step lands on the (1,2) warp');
+SceneOverworld.stepLand();
+eq(rt13.player.mapId, 'cave', 'stepLand warps the hero to the cave');
+eq(rt13.player.x, 2, 'cave warp lands at x=2');
+eq(rt13.player.y, 7, 'cave warp lands at y=7');
+eq(rt13.hero.style.left, '64px', 'hero marker lands on the cave target tile (left)');
+eq(rt13.hero.style.top, '224px', 'hero marker lands on the cave target tile (top)');
+eq(sceneRegistry['hud-map'].textContent, 'ECHO HOLLOW', 'HUD map name reads ECHO HOLLOW');
+eq(rt13.player.encounter.stepsSinceReset, 0, 'cave warp resets the encounter grace counter');
+ok(sceneTileClass(rt13, 2, 7).indexOf('tile-floor') !== -1,
+  'grid was rebuilt for the cave (FLOOR at the landing tile)');
+ok(sceneTileClass(rt13, 1, 7).indexOf('tile-warp') !== -1,
+  'cave grid renders the visible return warp at (1,7)');
+ok(sceneTileClass(rt13, 0, 0).indexOf('tile-wall') !== -1,
+  'rebuilt grid shows the cave WALL border');
+eq(rt13.npcs.length, 0, 'cave carries no NPCs');
+
+// --- Cave -> forest via the (1,7) warp ---
+rt13.player = Overworld.attemptMove(rt13.player, 'left', Overworld.MOVE_DURATION_MS);
+eq(rt13.player.x, 1, 'cave step lands on the (1,7) return warp');
+SceneOverworld.stepLand();
+eq(rt13.player.mapId, 'forest', 'cave warp returns to the forest');
+eq(rt13.player.x, 2, 'cave return warp lands at forest x=2');
+eq(rt13.player.y, 2, 'cave return warp lands at forest y=2');
+eq(sceneRegistry['hud-map'].textContent, 'FOREST CLEARING',
+  'HUD map name is back to the forest after the cave');
+
+// --- Town safety: registered steps never trigger ---
+rt13.player = Overworld.createPlayerState(
+  townMap, 8, 12, 'down', Overworld.getMapConfig('town').npcs, 'town');
+for (let i = 0; i < 12; i++) {
+  SceneOverworld.stepLand();
+}
+eq(rt13.player.encounter.triggered, false,
+  'twelve stepLand calls on the town map never trigger an encounter');
+eq(rt13.player.encounter.stepsSinceReset, 12,
+  'town keeps counting steps without battles');
+
+// --- Map-aware battle handoff: encounter on the cave map ---
+rt13.player = Overworld.createPlayerState(
+  caveMap, 2, 7, 'down', Overworld.getMapConfig('cave').npcs, 'cave');
+SceneOverworld.refreshOverworld();
+eq(sceneRegistry['hud-map'].textContent, 'ECHO HOLLOW',
+  'HUD names the cave before the encounter');
+SceneOverworld.startEncounter('wolf');
+ok(sceneRegistry['scene-battle'].classList.contains('active'),
+  'encounter switches to the battle scene');
+ok(!sceneRegistry['scene-overworld'].classList.contains('active'),
+  'overworld scene deactivates during the battle');
+eq(rt13.inEncounter, true, 'scene tracks the active encounter');
+eq(rt13.paused, true, 'overworld input pauses during the battle');
+flushScene();
+let scBattleGuard = 0;
+while (SceneBattle.state().phase !== 'victory' && scBattleGuard < 200) {
+  scBattleGuard++;
+  const st = SceneBattle.state();
+  if (st.phase === 'target') {
+    SceneBattle.command('attack', st.enemies.findIndex(e => e.alive));
+  } else if (st.phase === 'player') {
+    SceneBattle.command('attack');
+  }
+  flushScene();
+}
+eq(SceneBattle.state().phase, 'victory', 'encounter battle is won by attacking');
+sceneRegistry['victory-again'].click();
+eq(SceneBattle.state().phase, 'victory',
+  'victory does not loop another battle (battle state untouched)');
+ok(sceneRegistry['scene-overworld'].classList.contains('active'),
+  'victory returns control to the overworld');
+eq(rt13.inEncounter, false, 'scene clears the encounter flag');
+eq(rt13.player.mapId, 'cave', 'the hero is still on the cave map after the battle');
+eq(rt13.player.x, 2, 'the hero returns to the same cave tile (x=2)');
+eq(rt13.player.y, 7, 'the hero returns to the same cave tile (y=7)');
+eq(sceneRegistry['hud-map'].textContent, 'ECHO HOLLOW',
+  'HUD still names the cave map after the battle round trip');
 
 // ---- Result ------------------------------------------------------------------
 console.log('\n----------------------------------------');

@@ -784,6 +784,22 @@ canvas#game-canvas {
     background: #b98d4f;
 }
 
+/* Phase 13 map tiles: the yellow warp portal reads as a bright square
+   with a darker inner rim so it stands out at 32px; the cave walls and
+   floor stay in the flat 8-bit palette. */
+.tile-warp {
+    background: #e8c832;
+    box-shadow: inset 0 0 0 2px #8f7a1a;
+}
+
+.tile-wall {
+    background: #3a3a4a;
+}
+
+.tile-floor {
+    background: #5a4a3a;
+}
+
 /* Hero marker wrapper: positioned over the grid, holds the sprite and a
    hidden SVG silhouette fallback (shown when the sprite fails to load). */
 .hero-map-sprite {
@@ -841,6 +857,10 @@ canvas#game-canvas {
 
 .npc-merchant {
     background: #7a3ea8;
+}
+
+.npc-elder {
+    background: #d8d8e8;
 }
 
 /* --- Overworld dialogue box (retro style, bottom of the map) --- */
@@ -908,6 +928,10 @@ canvas#game-canvas {
 
 #hud-gold {
     color: #ffd76a;
+}
+
+#hud-map {
+    color: #66d9c8;
 }
 
 /* --- Merchant shop menu (Phase 12): dialogue-box aesthetic --- */

@@ -10,9 +10,16 @@
  * Public API (window.Overworld):
  *   TILE                      tile type constants
  *   MOVE_DURATION_MS          time (ms) one tile-to-tile step takes
- *   buildFirstMap()           fresh 20x15 forest-clearing map (2D array)
- *   isWalkableTile(map, x, y) false for out-of-bounds, TREE, WATER
- *   createPlayerState(map, x, y, facing?)
+ *   MAPS                      map registry (id, name, source, encounter, npcs, warps)
+ *   buildMap(id)              2D tile array for a registry map; null if unknown
+ *   buildFirstMap()           alias of buildMap('forest')
+ *   getMapConfig(id)          the registry entry; null if unknown
+ *   warpAt(mapId, x, y)       warp entry at those coords or null
+ *   applyWarp(state)         new state on the warp's target map (no-op clone
+ *                             when not standing on a warp)
+ *   pickEncounterEnemyFor(mapId, rng)  weighted enemy pick for that map's pool
+ *   isWalkableTile(map, x, y) false for out-of-bounds, TREE, WATER, WALL
+ *   createPlayerState(map, x, y, facing?, npcs?, mapId?)
  *   attemptMove(state, direction, dt) -> new state (input never mutated)
  */
 var Overworld = (function () {
@@ -22,8 +29,10 @@ var Overworld = (function () {
         GRASS: 0,
         TREE: 1,
         WATER: 2,
-        PATH: 3
-        // NPC tile markers will be added with the NPC segment.
+        PATH: 3,
+        WARP: 4,   // Phase 13: warp exit to another map (walkable)
+        WALL: 5,   // Phase 13: solid cave wall (unwalkable, like TREE)
+        FLOOR: 6   // Phase 13: walkable cave floor
     };
 
     var MOVE_DURATION_MS = 200; // one grid step takes this long
@@ -42,11 +51,13 @@ var Overworld = (function () {
 
     // First map: a 20x15 forest clearing. TREE ring borders the map, a
     // WATER pond sits in the north-east, and a PATH runs from the south
-    // clearing up to the pond's edge.
+    // clearing up to the pond's edge. Phase 13 warps: the south path end
+    // (8,13) warps to the town, and the west clearing (1,2) warps to the
+    // cave.
     var FIRST_MAP_SOURCE = [
         'TTTTTTTTTTTTTTTTTTTT',
         'TGGGGGGGGGGGGGGGGGGT',
-        'TGGGGGGGGGGGWWWWWGGT',
+        'TXGGGGGGGGGGWWWWWGGT',
         'TGGGGGGGGGGGWWWWWGGT',
         'TGGGGGPPPPPPWWWWWGGT',
         'TGGGGGGGPGGGWWWWWGGT',
@@ -57,15 +68,62 @@ var Overworld = (function () {
         'TGGGGGGGPGGGGGGGGGGT',
         'TGGGGGGGPGGGGGGGGGGT',
         'TGGGGGGGPGGGGGGGGGGT',
-        'TGGGGGGGPGGGGGGGGGGT',
+        'TGGGGGGGXGGGGGGGGGGT',
         'TTTTTTTTTTTTTTTTTTTT'
+    ];
+
+    // Town map (Phase 13): ELDERBROOK — TREE border, PATH cross streets
+    // (column x=8 from y=1 to y=12, row y=7 from x=1 to x=18), four TREE
+    // building blocks, and the rest grass. The visible X warp at (8,13)
+    // is the exit back to the forest; the town is safe from encounters.
+    var TOWN_MAP_SOURCE = [
+        'TTTTTTTTTTTTTTTTTTTT',
+        'TGGGGGGGPGGGGGGGGGGT',
+        'TGGTTTGGPGGGGGTTTGGT',
+        'TGGTTTGGPGGGGGTTTGGT',
+        'TGGTTTGGPGGGGGTTTGGT',
+        'TGGGGGGGPGGGGGGGGGGT',
+        'TGGGGGGGPGGGGGGGGGGT',
+        'TPPPPPPPPPPPPPPPPPPT',
+        'TGGGGGGGPGGGGGGGGGGT',
+        'TGGGGGGGPGGGGGGGGGGT',
+        'TGGTTTGGPGGGGGTTTGGT',
+        'TGGTTTGGPGGGGGTTTGGT',
+        'TGGTTTGGPGGGGGTTTGGT',
+        'TGGGGGGGXGGGGGGGGGGT',
+        'TTTTTTTTTTTTTTTTTTTT'
+    ];
+
+    // Cave map (Phase 13): ECHO HOLLOW — WALL border, FLOOR interior,
+    // three WALL clusters placed off the central y=7 lane so every
+    // region stays reachable. The visible X warp at (1,7) is the exit
+    // back to the forest. Wolf-weighted encounters.
+    var CAVE_MAP_SOURCE = [
+        'RRRRRRRRRRRRRRRRRRRR',
+        'RFFFFFFFFFFFFFFFFFFR',
+        'RFFFFFFFFFFFFFFFFFFR',
+        'RFFFRRRFFFFFRRRFFFFR',
+        'RFFFRRRFFFFFRRRFFFFR',
+        'RFFFFFFFFFFFFFFFFFFR',
+        'RFFFFFFFFFFFFFFFFFFR',
+        'RXFFFFFFFFFFFFFFFFFR',
+        'RFFFFFFFFFFFFFFFFFFR',
+        'RFFFFFFFFFFFFFFFFFFR',
+        'RFFFFFFFRRRRFFFFFFFR',
+        'RFFFFFFFRRRRFFFFFFFR',
+        'RFFFFFFFFFFFFFFFFFFR',
+        'RFFFFFFFFFFFFFFFFFFR',
+        'RRRRRRRRRRRRRRRRRRRR'
     ];
 
     var CHAR_TO_TILE = {
         G: TILE.GRASS,
         T: TILE.TREE,
         W: TILE.WATER,
-        P: TILE.PATH
+        P: TILE.PATH,
+        X: TILE.WARP,
+        R: TILE.WALL,
+        F: TILE.FLOOR
     };
 
     // Non-hostile NPCs on the first map (Phase 11 Segment 4).
@@ -107,15 +165,140 @@ var Overworld = (function () {
     ];
 
     // ------------------------------------------------------------------
+    // Maps registry (Phase 13): each entry owns its source art, encounter
+    // tuning, NPCs, and warp exits. encounter.pool entries are
+    // [enemyId, weight] pairs walked cumulatively by pickEncounterEnemyFor.
+    // ------------------------------------------------------------------
+
+    var TOWN_NPCS = [
+        {
+            id: 'merchant',
+            name: 'Merchant',
+            x: 10,  // grass just east of the crossing
+            y: 8,
+            shop: true, // opens the potion shop on interaction
+            dialogue: [
+                'Welcome to Elderbrook! Finest potions on the crossroads.',
+                'Only 15 gold each — the elder buys them by the crate.',
+                'Care to browse my wares?'
+            ]
+        },
+        {
+            id: 'elder',
+            name: 'Town Elder',
+            x: 6,   // grass west of the north street
+            y: 6,
+            dialogue: [
+                'Welcome to Elderbrook, traveler.',
+                'A dark cave lies west of the forest clearing.',
+                'Wolves howl in Echo Hollow. Prepare well before you enter.'
+            ]
+        }
+    ];
+
+    var MAPS = {
+        forest: {
+            id: 'forest',
+            name: 'FOREST CLEARING',
+            source: FIRST_MAP_SOURCE,
+            encounter: {
+                rate: 0.15,
+                pool: [['goblin', 0.5], ['wolf', 0.5]]
+            },
+            npcs: NPCS,
+            warps: [
+                { x: 8, y: 13, toMap: 'town', toX: 8, toY: 12 },
+                { x: 1, y: 2, toMap: 'cave', toX: 2, toY: 7 }
+            ]
+        },
+        town: {
+            id: 'town',
+            name: 'ELDERBROOK',
+            source: TOWN_MAP_SOURCE,
+            encounter: { rate: 0, pool: [] }, // town is safe
+            npcs: TOWN_NPCS,
+            warps: [
+                { x: 8, y: 13, toMap: 'forest', toX: 8, toY: 12 }
+            ]
+        },
+        cave: {
+            id: 'cave',
+            name: 'ECHO HOLLOW',
+            source: CAVE_MAP_SOURCE,
+            encounter: {
+                rate: 0.20,
+                pool: [['wolf', 0.7], ['goblin', 0.3]]
+            },
+            npcs: [],
+            warps: [
+                { x: 1, y: 7, toMap: 'forest', toX: 2, toY: 2 }
+            ]
+        }
+    };
+
+    // ------------------------------------------------------------------
     // Map
     // ------------------------------------------------------------------
 
-    function buildFirstMap() {
-        return FIRST_MAP_SOURCE.map(function (row) {
+    function getMapConfig(id) {
+        return (id && MAPS[id]) || null;
+    }
+
+    function buildMap(id) {
+        var cfg = getMapConfig(id);
+        if (!cfg) {
+            return null;
+        }
+        return cfg.source.map(function (row) {
             return row.split('').map(function (ch) {
                 return CHAR_TO_TILE[ch];
             });
         });
+    }
+
+    /*
+     * warpAt(mapId, x, y) -> warp entry or null.
+     * Warp exits are registry data, independent of the tile grid.
+     */
+    function warpAt(mapId, x, y) {
+        var cfg = getMapConfig(mapId);
+        if (!cfg) {
+            return null;
+        }
+        for (var i = 0; i < cfg.warps.length; i++) {
+            var warp = cfg.warps[i];
+            if (warp.x === x && warp.y === y) {
+                return warp;
+            }
+        }
+        return null;
+    }
+
+    /*
+     * applyWarp(state) -> new state.
+     * Standing on a warp exit: returns a fresh player state on the target
+     * map (rebuilt grid, target NPCs and map id), facing preserved, step
+     * movement reset to idle, and the encounter fully reset. Standing on
+     * a normal tile: an unchanged clone. Pure — input never mutated.
+     */
+    function applyWarp(state) {
+        var target = warpAt(state.mapId || 'forest', state.x, state.y);
+        if (!target) {
+            return cloneState(state);
+        }
+        return createPlayerState(
+            buildMap(target.toMap),
+            target.toX,
+            target.toY,
+            state.facing,
+            getMapConfig(target.toMap).npcs,
+            target.toMap
+        );
+    }
+
+    // buildFirstMap stays the forest map entry point (Phase 11 callers).
+    function buildFirstMap() {
+        return buildMap('forest');
     }
 
     // ------------------------------------------------------------------
@@ -131,19 +314,20 @@ var Overworld = (function () {
             return false;
         }
         var tile = row[x];
-        return tile !== TILE.TREE && tile !== TILE.WATER;
+        return tile !== TILE.TREE && tile !== TILE.WATER && tile !== TILE.WALL;
     }
 
     // ------------------------------------------------------------------
     // Player state
     // ------------------------------------------------------------------
 
-    function createPlayerState(map, x, y, facing, npcs) {
+    function createPlayerState(map, x, y, facing, npcs, mapId) {
         return {
             x: x,
             y: y,
             facing: facing || 'down',
             map: map,
+            mapId: mapId || 'forest',
             npcs: npcs || NPCS, // shared read-only reference, never mutated
             moving: {
                 active: false,
@@ -167,6 +351,7 @@ var Overworld = (function () {
             y: state.y,
             facing: state.facing,
             map: state.map, // shared read-only reference, never mutated
+            mapId: state.mapId,
             npcs: state.npcs, // shared read-only reference, never mutated
             moving: {
                 active: state.moving.active,
@@ -260,6 +445,7 @@ var Overworld = (function () {
 
     /*
      * pickEncounterEnemy(rng) -> 'goblin' | 'wolf' (50/50 weight).
+     * Forest 50/50 pick, kept for backward compatibility.
      * rng is injectable; defaults to Math.random.
      */
     function pickEncounterEnemy(rng) {
@@ -268,27 +454,58 @@ var Overworld = (function () {
     }
 
     /*
+     * pickEncounterEnemyFor(mapId, rng) -> enemy id or null.
+     * Weighted pick from that map's encounter pool: a cumulative walk
+     * over the [enemyId, weight] entries. Returns the last entry when the
+     * roll lands past the total weight, and null for an empty pool.
+     * rng is injectable; defaults to Math.random.
+     */
+    function pickEncounterEnemyFor(mapId, rng) {
+        var cfg = getMapConfig(mapId) || MAPS.forest;
+        var pool = cfg.encounter.pool;
+        if (pool.length === 0) {
+            return null;
+        }
+        var roll = rng ? rng() : Math.random();
+        var cumulative = 0;
+        for (var i = 0; i < pool.length; i++) {
+            cumulative += pool[i][1];
+            if (roll < cumulative) {
+                return pool[i][0];
+            }
+        }
+        return pool[pool.length - 1][0];
+    }
+
+    /*
      * registerStep(state, rng) -> new state (input never mutated).
      * Called by the scene layer after each successful move onto walkable
-     * terrain. The first ENCOUNTER_GRACE_STEPS steps after entering the map
-     * or after the last battle never trigger, so the player is never
-     * ambushed immediately. From step ENCOUNTER_GRACE_STEPS + 1 on, each
-     * step rolls rng(); a roll under ENCOUNTER_RATE triggers an encounter
-     * and picks the enemy with a second roll.
+     * terrain. Rate, pool, and (optional) grace come from the current
+     * map's registry entry; maps without an explicit grace keep the
+     * ENCOUNTER_GRACE_STEPS default. The first grace steps after entering
+     * the map or after the last battle never trigger, so the player is
+     * never ambushed immediately. After the grace period each step rolls
+     * rng(); a roll under the map's rate triggers an encounter and picks
+     * the enemy with a second weighted roll.
      */
     function registerStep(state, rng) {
         var next = cloneState(state);
+        var cfg = getMapConfig(state.mapId || 'forest') || MAPS.forest;
+        var grace = (typeof cfg.encounter.grace === 'number')
+            ? cfg.encounter.grace
+            : ENCOUNTER_GRACE_STEPS;
         next.encounter.stepsSinceReset = state.encounter.stepsSinceReset + 1;
         next.encounter.triggered = false;
 
-        if (next.encounter.stepsSinceReset <= ENCOUNTER_GRACE_STEPS) {
+        if (next.encounter.stepsSinceReset <= grace) {
             return next; // grace period: no roll, no ambush
         }
 
         var roll = rng ? rng() : Math.random();
-        if (roll < ENCOUNTER_RATE) {
+        if (roll < cfg.encounter.rate) {
             next.encounter.triggered = true;
-            next.encounter.lastEnemyId = pickEncounterEnemy(rng);
+            next.encounter.lastEnemyId =
+                pickEncounterEnemyFor(state.mapId || 'forest', rng);
             next.encounter.stepsSinceReset = 0; // fresh grace after this battle
         }
         return next;
@@ -458,7 +675,13 @@ var Overworld = (function () {
         ENCOUNTER_RATE: ENCOUNTER_RATE,
         ENCOUNTER_GRACE_STEPS: ENCOUNTER_GRACE_STEPS,
         NPCS: NPCS,
+        MAPS: MAPS,
         buildFirstMap: buildFirstMap,
+        buildMap: buildMap,
+        getMapConfig: getMapConfig,
+        warpAt: warpAt,
+        applyWarp: applyWarp,
+        pickEncounterEnemyFor: pickEncounterEnemyFor,
         isWalkableTile: isWalkableTile,
         createPlayerState: createPlayerState,
         attemptMove: attemptMove,

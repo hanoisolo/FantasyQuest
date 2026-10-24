@@ -138,6 +138,12 @@ var RetroAudio = (function () {
         }
     }
 
+    // Short ascending two-tone chime (map warp transition).
+    function playWarp() {
+        tone({ type: 'sine', freq: 660, duration: 0.12, gain: 0.14, start: 0.00 });
+        tone({ type: 'sine', freq: 990, duration: 0.18, gain: 0.14, start: 0.10 });
+    }
+
     return {
         // Pass 1 primary API
         playCursor: playCursor,
@@ -145,6 +151,7 @@ var RetroAudio = (function () {
         playMagic: playMagic,
         playHeal: playHeal,
         playVictory: playVictory,
+        playWarp: playWarp,
 
         // Legacy aliases (overworld, shop, older callers)
         beep: playCursor,
