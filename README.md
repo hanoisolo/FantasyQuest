@@ -21,10 +21,11 @@ Then visit `http://localhost:8000`.
 
 Controls:
 
-- On the title screen, click / tap or press `Space` / `Enter` to enter the overworld (Phase 11).
+- On the title screen, click / tap or press `Space` / `Enter` to start a new game (Phase 11), or click the `CONTINUE` button to resume your latest save — the button is visibly disabled until a save exists.
 - In the overworld, move with the arrow keys or `WASD` (strictly tile-to-tile; trees, water, cave walls, and NPCs block movement). Press `E`, `Space`, or `Enter` while facing an NPC to open their dialogue box; the same key advances each line and closes the box after the last line. Three zones are connected by visible yellow warp tiles: the Forest Clearing (random encounters, 15% chance per step, goblins and wolves 50-50), Elderbrook town (encounter-free; home to a second Merchant and the Town Elder), and Echo Hollow cave (wolf-heavy: 20% chance per step, 70% wolves). Stepping onto a warp swaps the map and lands you beside the matching return warp on the far side; a safe grace period applies after entering any map or after a battle.
 - In battle, click the command buttons: `ATTACK` (then click a glowing enemy to target it), `MAGIC` (10 MP, hits all enemies), `ITEM` (use a potion from the hero's inventory to restore 30 HP, clamped to max HP; it consumes the turn, and is refused with "No potions!" when the inventory is empty), `DEFEND` (halve incoming damage for one enemy turn).
 - Winning a battle awards EXP and Gold (Phase 9/10). Leveling up raises MaxHP (+5) and Attack (+2) and fully heals the hero. Level, EXP, and Gold persist across battles (including overworld encounters) and are shown in the hero HUD.
+- Progress autosaves to your browser's localStorage (key `fantasyquest_save_v1`, Phase 15) whenever you win a battle, warp between zones, or buy from the Merchant — a brief GAME SAVED flash in the HUD confirms it, and the CONTINUE button on the title screen resumes from that save at the exact map and tile. Corrupt or missing saves fall back to a fresh new game, and starting a new game keeps the old save until the new run's first autosave overwrites it.
 - Click the `CRT: ON` button or press `S` to toggle the CRT scanline effect.
 
 ## Project Structure
@@ -38,6 +39,8 @@ FantasyQuest/
 ├── battle.js                  Turn-based battle engine (Pass 1 + Phase 9/10 rewards)
 ├── overworld.js               Pure overworld logic: MAPS registry, three zones, warp tiles, movement, encounters, NPCs (Phase 11/13)
 ├── overworld_scene.js         Overworld rendering, input, dialogue box, and map/warp transitions (Phase 11/13)
+├── save.js                    Save/load module: localStorage persistence, save validation, private-mode safety (Phase 15)
+├── title_scene.js             Title screen start logic: NEW GAME / CONTINUE decisions and save fallback (Phase 15)
 ├── assets/
 │   ├── backgrounds/           Battle and scene backdrops
 │   ├── portraits/             Character dialogue portraits
