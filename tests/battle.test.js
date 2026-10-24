@@ -225,10 +225,11 @@ eq(s.phase, 'player', 'ATB charges to full and hands the turn to the player');
 eq(s.heroAtb, 100, 'ATB gauge reads 100 after charging');
 eq(s.atbMax, 100, 'snapshot exposes the 100-point ATB max');
 eq(s.heroSpeed, 14, 'hero speed stat is 14');
-eq(s.heroHp, 120, 'hero starts at full HP (120)');
+eq(s.heroHp, 120, 'hero starts at the persistent profile HP (120 on a fresh profile)');
 eq(s.heroMaxHp, 120, 'hero max HP is 120');
 eq(s.heroMp, 45, 'hero starts at full MP (45)');
 eq(s.heroMaxMp, 45, 'hero max MP is 45');
+eq(s.heroPotions, 1, 'hero starts with 1 potion (Progression.STARTING_POTIONS)');
 eq(s.heroPower, 14, 'hero base power is 14 (chrono physical formula)');
 eq(s.defending, false, 'hero does not start defending');
 eq(s.heroLevel, 1, 'hero starts at level 1');
@@ -280,54 +281,58 @@ eq(s.enemies[1].hp, 45 - 34, 'calculateMagicDamage hits Goblin 1 for exactly 34'
 eq(s.phase, 'player', 'phase returns to the player after magic + enemy turn');
 ok(said('Arcane Spark'), 'battle log names the spell Arcane Spark');
 
-// --- ITEM: Arcane Crystal relic, +50 HP, green heal float ---
+// --- ITEM: potion via Progression.usePotion, +30 HP, turn consumed ---
 Battle.playAgain();
 flush();
 
-// Full HP: the relic is refused, no turn consumed
+// Full HP: the potion is refused, no turn consumed
 Battle.command('item');
 s = Battle.state();
 eq(registry['battle-message'].textContent, 'HP is already full!',
   'ITEM at full HP is refused with a message');
-ok(registry['item-panel'].classList.contains('hidden'), 'item panel stays closed at full HP');
+eq(s.phase, 'player', 'refused ITEM keeps the phase on player');
 eq(s.turnCount, 0, 'refused ITEM consumes no turn');
 
-// Take two enemy turns of damage, then heal with the relic
+// Take two enemy turns of damage, then heal with the starting potion
 Battle.command('defend'); flush();
 Battle.command('defend'); flush();
 const hpBeforeItem = Battle.state().heroHp;
-ok(hpBeforeItem < 120, 'hero is damaged before using the relic');
+ok(hpBeforeItem < 120, 'hero is damaged before using a potion');
 
 Battle.command('item');
-ok(!registry['item-panel'].classList.contains('hidden'), 'ITEM opens the relic panel');
-ok(said('ARCANE CRYSTAL'), 'panel prompt names the Arcane Crystal');
-
-const expectedHeal = Math.min(50, 120 - hpBeforeItem);
-registry['item-use'].click();
 s = Battle.state();
-eq(s.heroHp, Math.min(hpBeforeItem + 50, 120), 'relic restores 50 HP (clamped to maxHp)');
+const expectedHeal = Math.min(30, 120 - hpBeforeItem);
+eq(s.heroHp, 120, 'potion heals 30 HP clamped to maxHp (+' + expectedHeal + ')');
+eq(s.heroPotions, 0, 'using a potion consumes it (fresh profile starts with 1)');
+ok(said('HERO uses a potion!'), 'battle log announces the potion use');
 ok(registry['hero-unit'].children.some(c =>
   c.className.indexOf('float-number heal') !== -1 && c.textContent === '+' + expectedHeal),
   'green floating heal number (+' + expectedHeal + ') rises over the hero');
-ok(registry['item-panel'].classList.contains('hidden'), 'relic panel hides after USE');
+eq(s.phase, 'resolving', 'using a potion hands the turn over (resolving)');
 flush();
 s = Battle.state();
-eq(s.turnCount, 3, 'using the relic consumes the turn (enemy acted)');
-eq(s.phase, 'player', 'phase returns to the player after relic + enemy turn');
+eq(s.turnCount, 3, 'using a potion consumes the turn (enemy acted)');
+eq(s.phase, 'player', 'phase returns to the player after potion + enemy turn');
 
-// CANCEL closes the panel without healing or consuming a turn
-Battle.playAgain();
-flush();
-Battle.command('defend'); flush();
-const hpBeforeCancel = Battle.state().heroHp;
-const turnsBeforeCancel = Battle.state().turnCount;
+// Empty inventory: refused with "No potions!" without consuming a turn
 Battle.command('item');
-registry['item-cancel'].click();
 s = Battle.state();
-ok(registry['item-panel'].classList.contains('hidden'), 'CANCEL closes the relic panel');
-eq(s.heroHp, hpBeforeCancel, 'CANCEL does not heal');
-eq(s.turnCount, turnsBeforeCancel, 'CANCEL consumes no turn');
-eq(s.phase, 'player', 'CANCEL keeps the phase on player');
+eq(registry['battle-message'].textContent, 'No potions!',
+  'ITEM with an empty inventory shows "No potions!"');
+eq(s.heroPotions, 0, 'empty inventory stays empty');
+eq(s.phase, 'player', '"No potions!" keeps the phase on player');
+eq(s.turnCount, 3, '"No potions!" consumes no turn');
+
+// --- Persistent vitals: battle start reads the profile HP ---
+const prof = Battle.getProfile();
+eq(typeof prof.hp, 'number', 'profile carries persistent hp (initProfileVitals)');
+eq(prof.potions, 0, 'profile records the potion consumed mid-battle');
+prof.hp = 90; // simulate walking into battle wounded
+Battle.playAgain(); flush();
+eq(Battle.state().heroHp, 90, 'battle start reads the persistent profile HP');
+prof.hp = prof.maxHp;
+Battle.playAgain(); flush();
+eq(Battle.state().heroHp, 120, 'restoring profile HP carries into the next battle');
 
 // --- DEFEND: 50% incoming damage reduction for one turn ---
 Battle.playAgain();
@@ -387,7 +392,7 @@ Battle.playAgain();
 flush();
 s = Battle.state();
 eq(s.phase, 'player', 'playAgain() recharges into a fresh player turn');
-eq(s.heroHp, s.heroMaxHp, 'playAgain() restores hero HP to full (leveled maxHp)');
+eq(s.heroHp, s.heroMaxHp, 'playAgain() starts at the persistent profile HP (full after the level-up heal)');
 eq(s.heroMp, 45, 'playAgain() restores hero MP to full');
 eq(s.enemies[0].hp, 45, 'playAgain() restores Goblin 0 to 45 HP');
 eq(s.enemies[1].hp, 45, 'playAgain() restores Goblin 1 to 45 HP');
@@ -465,6 +470,81 @@ s = Battle.state();
 eq(s.phase, 'player', 'RETRY BATTLE resets into a fresh player turn');
 eq(s.heroHp, s.heroMaxHp, 'retried battle starts at full HP');
 eq(s.enemies[0].hp, 45, 'retried battle restores the goblins');
+
+// --- Enemy roster: init(enemyId) single-enemy encounter battles ---
+// Encounter battles pay each enemy's own reward; the default init()
+// two-goblin battle keeps the fixed Pass 1 45/30 reward.
+
+const rosterGold = Battle.getProfile().gold;
+const rosterExp = Battle.getProfile().experience;
+eq(Battle.init('goblin'), true, 'init(\'goblin\') returns true');
+flush();
+s = Battle.state();
+eq(s.enemies.length, 1, 'init(\'goblin\') spawns exactly one enemy');
+eq(s.enemies[0].id, 'goblin', 'goblin encounter enemy id is goblin');
+eq(s.enemies[0].name, 'FOREST GOBLIN', 'goblin encounter spawns a Forest Goblin');
+eq(s.enemies[0].hp, 45, 'goblin encounter goblin starts at 45 HP');
+eq(s.enemies[0].stats.power, 6, 'goblin encounter exposes power 6');
+guard = 0;
+while (Battle.state().phase !== 'victory' && guard < 200) {
+  guard++;
+  const st = Battle.state();
+  if (st.phase === 'target') {
+    Battle.command('attack', st.enemies.findIndex(e => e.alive));
+  } else if (st.phase === 'player') {
+    Battle.command('attack');
+  }
+  flush();
+}
+s = Battle.state();
+eq(s.phase, 'victory', 'goblin encounter is won by attacking (guard=' + guard + ')');
+eq(s.lastExpGained, 25, 'goblin encounter awards 25 EXP');
+eq(s.lastGoldGained, 18, 'goblin encounter awards 18 gold');
+eq(s.heroGold, rosterGold + 18, 'goblin encounter gold reaches the hero');
+eq(s.heroExperience, rosterExp + 25, 'goblin encounter EXP reaches the hero');
+
+// init('wolf'): one Shadow Wolf with CT stats and 20/12 rewards
+const wolfGold = Battle.getProfile().gold;
+eq(Battle.init('wolf'), true, 'init(\'wolf\') returns true');
+flush();
+s = Battle.state();
+eq(s.enemies.length, 1, 'init(\'wolf\') spawns exactly one enemy');
+eq(s.enemies[0].id, 'wolf', 'wolf encounter enemy id is wolf');
+eq(s.enemies[0].name, 'SHADOW WOLF', 'wolf encounter spawns a Shadow Wolf');
+eq(s.enemies[0].hp, 38, 'Shadow Wolf starts at 38 HP');
+eq(s.enemies[0].maxHp, 38, 'Shadow Wolf max HP is 38');
+eq(s.enemies[0].stats.power, 10, 'Shadow Wolf power stat is 10');
+eq(s.enemies[0].stats.weaponAttack, 3, 'Shadow Wolf weapon_attack is 3');
+eq(s.enemies[0].stats.defense, 5, 'Shadow Wolf defense is 5');
+eq(s.enemies[0].stats.magicDefense, 3, 'Shadow Wolf magic_defense is 3');
+eq(s.enemies[0].stats.speed, 16, 'Shadow Wolf speed is 16');
+
+// Wolf strike through the chrono engine: power 10 / weapon 3 vs hero
+// defense 4 -> base 13.2, band 12-14, halved to 6-7 while defending.
+Battle.command('defend');
+const wolfHpBefore = Battle.state().heroHp;
+flush();
+s = Battle.state();
+const wolfDrop = wolfHpBefore - s.heroHp;
+ok(wolfDrop >= 6 && wolfDrop <= 7,
+  'defended Shadow Wolf strike lands in the 6-7 band (chrono power 10; got ' + wolfDrop + ')');
+
+guard = 0;
+while (Battle.state().phase !== 'victory' && guard < 200) {
+  guard++;
+  const st = Battle.state();
+  if (st.phase === 'target') {
+    Battle.command('attack', st.enemies.findIndex(e => e.alive));
+  } else if (st.phase === 'player') {
+    Battle.command('attack');
+  }
+  flush();
+}
+s = Battle.state();
+eq(s.phase, 'victory', 'wolf encounter is won by attacking (guard=' + guard + ')');
+eq(s.lastExpGained, 20, 'wolf encounter awards 20 EXP');
+eq(s.lastGoldGained, 12, 'wolf encounter awards 12 gold');
+eq(s.heroGold, wolfGold + 12, 'wolf encounter gold reaches the hero');
 
 console.log('\n----------------------------------------');
 console.log('RESULT: ' + passed + ' passed, ' + failed + ' failed');

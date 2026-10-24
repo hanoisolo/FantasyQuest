@@ -9,6 +9,10 @@
  * Public API (window.OverworldScene):
  *   initOverworld(container)  build the tile grid + hero marker and wire input
  *   refreshOverworld()        re-sync the hero marker from overworld state
+ *   startEncounter(enemyId)   pause input and hand control to the battle
+ *                             scene for an overworld encounter (the rAF loop
+ *                             calls this on an encounter roll; exposed so the
+ *                             headless tests can drive the same flow)
  */
 var OverworldScene = (function () {
     'use strict';
@@ -530,6 +534,7 @@ var OverworldScene = (function () {
 
     return {
         initOverworld: initOverworld,
-        refreshOverworld: refreshOverworld
+        refreshOverworld: refreshOverworld,
+        startEncounter: startEncounter
     };
 })();

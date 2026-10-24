@@ -419,6 +419,307 @@ Overworld.shopBuy(shop0, { gold: 100, potions: 0 });
 Overworld.shopLeave(shop0);
 eq(JSON.stringify(shop0), shopBefore, 'shopBuy/shopLeave never mutate the input shop');
 
+// ---- Battle-to-overworld round trip (scene layer, Phase 11) -----------------
+// A second sandbox with a DOM stub loads the full scene stack
+// (chrono engine, audio, progression, overworld, battle, overworld_scene)
+// and drives the real encounter flow: startEncounter -> victory ->
+// return to the map -> HUD -> merchant shop -> defeat retry.
+console.log('\n== Phase 11: battle-to-overworld round trip ==');
+
+class SceneClassList {
+  constructor() { this.set = new Set(); }
+  add(c) { this.set.add(c); }
+  remove(c) { this.set.delete(c); }
+  toggle(c, force) {
+    const want = force === undefined ? !this.set.has(c) : !!force;
+    if (want) this.set.add(c); else this.set.delete(c);
+    return want;
+  }
+  contains(c) { return this.set.has(c); }
+}
+class SceneEl {
+  constructor(tag, id) {
+    this.tagName = tag || 'div';
+    this.id = id || '';
+    this.children = [];
+    this.parentNode = null;
+    this.classList = new SceneClassList();
+    this.style = {};
+    this.attrs = {};
+    this.textContent = '';
+    this.disabled = false;
+    this.listeners = {};
+  }
+  set innerHTML(v) { this.children = []; this._innerHTML = String(v); }
+  get innerHTML() { return this._innerHTML || ''; }
+  setAttribute(k, v) { this.attrs[k] = String(v); }
+  getAttribute(k) { return (k in this.attrs) ? this.attrs[k] : null; }
+  appendChild(c) { c.parentNode = this; this.children.push(c); return c; }
+  removeChild(c) { this.children = this.children.filter(x => x !== c); c.parentNode = null; return c; }
+  addEventListener(t, fn) { (this.listeners[t] = this.listeners[t] || []).push(fn); }
+  removeEventListener(t, fn) {
+    if (this.listeners[t]) this.listeners[t] = this.listeners[t].filter(f => f !== fn);
+  }
+  click() { (this.listeners.click || []).forEach(f => f.call(this, { preventDefault() {} })); }
+  querySelector(sel) {
+    if (sel === '.result-line') {
+      if (!this._resultLine) {
+        this._resultLine = new SceneEl('p');
+        this._resultLine.classList.add('result-line');
+      }
+      return this._resultLine;
+    }
+    const di = /^\[data-index="(\d+)"\]$/.exec(sel);
+    if (di) {
+      return this.children.find(c => c.getAttribute('data-index') === di[1]) || null;
+    }
+    if (sel.charAt(0) === '.') {
+      const cls = sel.slice(1);
+      let node = this.children.find(c => c.classList.contains(cls));
+      if (!node) {
+        // Lazily materialize class-scoped children (dialogue lines, bar
+        // fills) so repeated queries return the same node.
+        node = new SceneEl('div');
+        node.classList.add(cls);
+        this.appendChild(node);
+      }
+      return node;
+    }
+    return new SceneEl();
+  }
+  querySelectorAll(sel) {
+    return this.children.filter(c => c.classList.contains(sel.slice(1)));
+  }
+  get className() { return [...this.classList.set].join(' '); }
+  set className(v) { this.classList.set = new Set(String(v).split(/\s+/).filter(Boolean)); }
+}
+
+const sceneIds = [
+  'battle-arena', 'scene-battle', 'enemy-row', 'hero-unit', 'hero-hp-fill',
+  'hero-mp-fill', 'hero-atb-fill', 'hero-atb-text', 'hero-hp-text',
+  'hero-mp-text', 'hero-level-text', 'hero-gold-text', 'turn-indicator',
+  'battle-message', 'victory-screen', 'defeat-screen', 'cmd-attack',
+  'cmd-magic', 'cmd-item', 'cmd-defend', 'victory-again', 'defeat-retry',
+  'scene-title', 'scene-overworld', 'overworld-shop', 'shop-buy',
+  'shop-leave', 'shop-message', 'hud-hp', 'hud-potions', 'hud-gold'
+];
+const sceneRegistry = {};
+sceneIds.forEach(id => {
+  const el = new SceneEl('div', id);
+  if (id === 'victory-screen' || id === 'defeat-screen') {
+    el.classList.add('hidden');
+  }
+  if (id === 'scene-title' || id === 'scene-battle' || id === 'scene-overworld') {
+    el.classList.add('scene');
+  }
+  sceneRegistry[id] = el;
+});
+
+const sceneDocListeners = {};
+const sceneDoc = {
+  getElementById: id => sceneRegistry[id] || null,
+  createElement: tag => new SceneEl(tag),
+  querySelectorAll: sel => sel === '.scene' ? [
+    sceneRegistry['scene-title'],
+    sceneRegistry['scene-battle'],
+    sceneRegistry['scene-overworld']
+  ] : [],
+  addEventListener: (type, fn) => {
+    (sceneDocListeners[type] = sceneDocListeners[type] || []).push(fn);
+  }
+};
+function pressKey(key) {
+  (sceneDocListeners.keydown || []).forEach(fn => fn({ key, preventDefault() {} }));
+}
+
+const scenePending = [];
+const sceneWindow = {
+  setTimeout: (fn) => { scenePending.push(fn); return scenePending.length; },
+  addEventListener() {},
+  AudioContext: undefined,       // force silent audio path
+  webkitAudioContext: undefined
+};
+
+const sceneSandbox = {
+  window: sceneWindow,
+  document: sceneDoc,
+  console,
+  setTimeout: sceneWindow.setTimeout,
+  Math,
+  Date
+};
+sceneSandbox.globalThis = sceneSandbox;
+vm.createContext(sceneSandbox);
+[
+  'chrono_battle_engine.js', 'audio.js', 'progression.js', 'overworld.js',
+  'battle.js', 'overworld_scene.js'
+].forEach(file => {
+  vm.runInContext(
+    fs.readFileSync(path.join(ROOT, file), 'utf8'),
+    sceneSandbox,
+    { filename: file }
+  );
+});
+// Plain top-level `var` modules become context globals; bridge them onto
+// the window stub so the scene layer's window.X references resolve.
+['Overworld', 'RetroAudio', 'Battle', 'OverworldScene'].forEach(name => {
+  sceneWindow[name] = sceneSandbox[name];
+});
+const SceneOverworld = sceneSandbox.OverworldScene;
+const SceneBattle = sceneSandbox.Battle;
+
+function flushScene(maxIters) {
+  let n = 0;
+  while (scenePending.length && n < (maxIters || 5000)) {
+    scenePending.shift()();
+    n++;
+  }
+  return n;
+}
+
+ok(typeof SceneOverworld === 'object' && SceneOverworld !== null,
+  'OverworldScene global is defined');
+ok(typeof SceneOverworld.startEncounter === 'function',
+  'OverworldScene.startEncounter() is exposed for the encounter flow');
+
+const sceneContainer = new SceneEl('div', 'ow-container');
+const rt = SceneOverworld.initOverworld(sceneContainer);
+ok(rt !== null && typeof rt === 'object', 'initOverworld returns the scene state');
+eq(rt.player.x, 8, 'scene hero starts at tile x=8');
+eq(rt.player.y, 12, 'scene hero starts at tile y=12');
+eq(rt.hero.style.left, '256px', 'hero marker renders on the start tile');
+
+// --- Encounter: startEncounter('goblin') hands control to the battle ---
+const rtGoldBefore = SceneBattle.getProfile().gold;
+const rtExpBefore = SceneBattle.getProfile().experience;
+
+SceneOverworld.startEncounter('goblin');
+ok(sceneRegistry['scene-battle'].classList.contains('active'),
+  'encounter switches to the battle scene');
+ok(!sceneRegistry['scene-overworld'].classList.contains('active'),
+  'overworld scene deactivates during the battle');
+eq(rt.inEncounter, true, 'scene tracks the active encounter');
+eq(rt.paused, true, 'overworld input pauses during the battle');
+flushScene();
+let bs = SceneBattle.state();
+eq(bs.enemies.length, 1, 'encounter battle spawns one enemy');
+eq(bs.enemies[0].id, 'goblin', 'encounter battle spawns the goblin');
+
+// --- Win the encounter battle ---
+let rtGuard = 0;
+while (SceneBattle.state().phase !== 'victory' && rtGuard < 200) {
+  rtGuard++;
+  const st = SceneBattle.state();
+  if (st.phase === 'target') {
+    SceneBattle.command('attack', st.enemies.findIndex(e => e.alive));
+  } else if (st.phase === 'player') {
+    SceneBattle.command('attack');
+  }
+  flushScene();
+}
+bs = SceneBattle.state();
+eq(bs.phase, 'victory', 'encounter battle is won by attacking');
+eq(SceneBattle.getProfile().gold, rtGoldBefore + 18,
+  'victory gold carries into the profile');
+eq(SceneBattle.getProfile().experience, rtExpBefore + 25,
+  'victory EXP carries into the profile');
+eq(SceneBattle.getProfile().level, 2, 'level-up carries into the profile');
+eq(SceneBattle.getProfile().hp, SceneBattle.getProfile().maxHp,
+  'end-of-battle HP carries into the profile');
+ok(!sceneRegistry['victory-screen'].classList.contains('hidden'),
+  'victory overlay is shown');
+
+// --- Victory returns to the overworld at the originating tile ---
+sceneRegistry['victory-again'].click();
+bs = SceneBattle.state();
+eq(bs.phase, 'victory',
+  'victory does not loop another battle (battle state untouched)');
+ok(sceneRegistry['scene-overworld'].classList.contains('active'),
+  'victory returns control to the overworld scene');
+ok(!sceneRegistry['scene-battle'].classList.contains('active'),
+  'battle scene deactivates on return');
+ok(sceneRegistry['victory-screen'].classList.contains('hidden'),
+  'victory overlay hides on return');
+eq(rt.inEncounter, false, 'scene clears the encounter flag');
+eq(rt.paused, false, 'overworld input resumes after the battle');
+eq(rt.player.x, 8, 'hero returns at the originating tile x=8');
+eq(rt.player.y, 12, 'hero returns at the originating tile y=12');
+eq(rt.hero.style.left, '256px', 'hero marker is restored to the originating tile');
+eq(rt.player.encounter.stepsSinceReset, 0,
+  'encounter grace counter resets after the battle');
+
+// --- HUD reflects post-battle HP/gold/potions ---
+const rtProfile = SceneBattle.getProfile();
+eq(sceneRegistry['hud-hp'].textContent, 'HP ' + rtProfile.hp + '/' + rtProfile.maxHp,
+  'HUD shows post-battle HP');
+eq(sceneRegistry['hud-gold'].textContent, '18 G', 'HUD shows post-battle gold');
+eq(sceneRegistry['hud-potions'].textContent, 'POT ' + rtProfile.potions,
+  'HUD shows post-battle potions');
+
+// --- Merchant shop still transacts after the battle round trip ---
+console.log('\n== Phase 12: shop after a battle round trip ==');
+// Walk-in shortcut: place the hero beside the merchant facing them, then
+// drive the real keydown path (dialogue -> shop -> buy).
+rt.player = Overworld.createPlayerState(rt.map, 5, 9, 'right');
+SceneOverworld.refreshOverworld();
+pressKey('e');
+ok(rt.dialogue !== null && rt.dialogue.open, 'interaction opens the merchant dialogue');
+let shopGuard = 0;
+while (!rt.shop && shopGuard < 10) {
+  shopGuard++;
+  pressKey('e');
+}
+ok(rt.shop !== null && rt.shop.open, 'finishing the dialogue opens the shop');
+ok(!sceneRegistry['overworld-shop'].classList.contains('hidden'),
+  'shop overlay is visible after the round trip');
+eq(sceneRegistry['shop-buy'].textContent, 'BUY POTION - 15 G',
+  'shop quotes the potion price');
+
+const shopGoldBefore = SceneBattle.getProfile().gold;
+const shopPotionsBefore = SceneBattle.getProfile().potions;
+sceneRegistry['shop-buy'].click();
+eq(SceneBattle.getProfile().gold, shopGoldBefore - 15,
+  'shop spends gold from the battle-won purse');
+eq(SceneBattle.getProfile().potions, shopPotionsBefore + 1,
+  'shop adds a potion after the round trip');
+eq(rt.shop.open, true, 'shop stays open for further purchases');
+ok(rt.shop.lastMessage.indexOf('Potion purchased') !== -1,
+  'shop confirms the purchase');
+eq(sceneRegistry['hud-gold'].textContent, (shopGoldBefore - 15) + ' G',
+  'HUD gold updates on purchase');
+eq(sceneRegistry['hud-potions'].textContent, 'POT ' + (shopPotionsBefore + 1),
+  'HUD potion count updates on purchase');
+sceneRegistry['shop-leave'].click();
+eq(rt.shop, null, 'LEAVE closes the shop');
+ok(sceneRegistry['overworld-shop'].classList.contains('hidden'),
+  'shop overlay hides on leave');
+
+// --- Defeat from an encounter keeps the retry fairness rule ---
+console.log('\n== Phase 11: encounter defeat retry ==');
+SceneOverworld.startEncounter('wolf');
+flushScene();
+let wolfGuard = 0;
+while (SceneBattle.state().phase !== 'defeat' && wolfGuard < 500) {
+  wolfGuard++;
+  SceneBattle.command('defend');
+  flushScene();
+}
+bs = SceneBattle.state();
+eq(bs.phase, 'defeat', 'defend-only grind reaches defeat against the wolf');
+ok(!sceneRegistry['defeat-screen'].classList.contains('hidden'),
+  'defeat overlay is shown');
+eq(SceneBattle.getProfile().hp, SceneBattle.getProfile().maxHp,
+  'defeat resets the profile to full HP (fairness rule)');
+
+sceneRegistry['defeat-retry'].click();
+flushScene();
+bs = SceneBattle.state();
+eq(bs.enemies.length, 1, 'RETRY restarts a single-enemy encounter');
+eq(bs.enemies[0].id, 'wolf', 'RETRY retries the same enemy (wolf)');
+eq(bs.heroHp, bs.heroMaxHp, 'retried encounter starts at full HP');
+ok(sceneRegistry['scene-battle'].classList.contains('active'),
+  'retry stays in the battle scene');
+
 // ---- Result ------------------------------------------------------------------
 console.log('\n----------------------------------------');
 console.log('RESULT: ' + passed + ' passed, ' + failed + ' failed');
