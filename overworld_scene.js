@@ -13,6 +13,9 @@
  *                             scene for an overworld encounter (the rAF loop
  *                             calls this on an encounter roll; exposed so the
  *                             headless tests can drive the same flow)
+ *   stepLand()                warp-or-encounter logic for a landed step; the
+ *                             rAF loop calls this after each completed step
+ *                             (exposed for the same headless reason)
  */
 var OverworldScene = (function () {
     'use strict';
@@ -70,6 +73,15 @@ var OverworldScene = (function () {
         }
         if (tile === TILE.PATH) {
             return 'tile-path';
+        }
+        if (tile === TILE.WARP) {
+            return 'tile-warp';
+        }
+        if (tile === TILE.WALL) {
+            return 'tile-wall';
+        }
+        if (tile === TILE.FLOOR) {
+            return 'tile-floor';
         }
         return 'tile-grass';
     }
@@ -227,6 +239,60 @@ var OverworldScene = (function () {
         refreshOverworld(); // hero is restored to the tile he was standing on
     }
 
+    // Swap the board's grid and NPC markers for the current map's. The
+    // hero marker stays in place; refreshOverworld re-syncs it. The
+    // scene's map/npcs follow the player state so interactions (shop,
+    // dialogue) hit the new map's NPCs.
+    function rebuildMapDom() {
+        if (!U || !U.board || !U.player) {
+            return;
+        }
+        var newGrid = buildGrid(U.player.map);
+        U.board.insertBefore(newGrid, U.grid);
+        U.board.removeChild(U.grid);
+        U.grid = newGrid;
+        U.map = U.player.map;
+        U.npcs = U.player.npcs;
+        for (var i = 0; i < U.npcMarkers.length; i++) {
+            if (U.npcMarkers[i].parentNode) {
+                U.npcMarkers[i].parentNode.removeChild(U.npcMarkers[i]);
+            }
+        }
+        U.npcMarkers = buildNpcMarkers(U.player.npcs);
+        for (var m = 0; m < U.npcMarkers.length; m++) {
+            U.board.appendChild(U.npcMarkers[m]);
+        }
+    }
+
+    /*
+     * The step just landed on walkable terrain. Warp exits take priority
+     * over the encounter roll: landing on a warp transitions to the
+     * target map (rebuilt grid and NPC markers, refreshed hero marker,
+     * updated HUD map name) and skips the encounter roll entirely for
+     * that landing. Otherwise the step registers for the random
+     * encounter roll, which may start a battle.
+     */
+    function onStepLand() {
+        if (!U || !U.player) {
+            return;
+        }
+        var player = U.player;
+        if (window.Overworld.warpAt(player.mapId, player.x, player.y)) {
+            U.player = window.Overworld.applyWarp(player);
+            rebuildMapDom();
+            refreshOverworld();
+            updateHud();
+            if (window.RetroAudio && typeof window.RetroAudio.playWarp === 'function') {
+                window.RetroAudio.playWarp();
+            }
+            return; // warps never roll an encounter for this landing
+        }
+        U.player = window.Overworld.registerStep(player, Math.random);
+        if (U.player.encounter.triggered) {
+            startEncounter(U.player.encounter.lastEnemyId);
+        }
+    }
+
     // ------------------------------------------------------------------
     // Interaction and dialogue
     // ------------------------------------------------------------------
@@ -262,6 +328,10 @@ var OverworldScene = (function () {
         U.hudHp.textContent = 'HP ' + p.hp + '/' + p.maxHp;
         U.hudPotions.textContent = 'POT ' + p.potions;
         U.hudGold.textContent = p.gold + ' G';
+        if (U.hudMap) {
+            var cfg = window.Overworld.getMapConfig(U.player.mapId);
+            U.hudMap.textContent = cfg ? cfg.name : 'FOREST CLEARING';
+        }
     }
 
     function renderDialogue() {
@@ -454,12 +524,7 @@ var OverworldScene = (function () {
                 U.player = window.Overworld.attemptMove(U.player, U.player.facing, dt);
                 refreshOverworld();
                 if (!U.player.moving.active) {
-                    // The step landed on walkable terrain: register it
-                    // for the random encounter roll.
-                    U.player = window.Overworld.registerStep(U.player, Math.random);
-                    if (U.player.encounter.triggered) {
-                        startEncounter(U.player.encounter.lastEnemyId);
-                    }
+                    onStepLand();
                 }
             }
             lastTs = ts;
@@ -518,6 +583,8 @@ var OverworldScene = (function () {
             hudHp: document.getElementById('hud-hp'),
             hudPotions: document.getElementById('hud-potions'),
             hudGold: document.getElementById('hud-gold'),
+            hudMap: document.getElementById('hud-map'),
+            npcMarkers: npcMarkers,
             paused: false,
             inEncounter: false
         };
@@ -535,6 +602,9 @@ var OverworldScene = (function () {
     return {
         initOverworld: initOverworld,
         refreshOverworld: refreshOverworld,
-        startEncounter: startEncounter
+        startEncounter: startEncounter,
+        // Headless entry point to the rAF loop's step-landing logic
+        // (warp transition first, then the encounter roll).
+        stepLand: onStepLand
     };
 })();

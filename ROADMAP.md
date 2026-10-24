@@ -54,7 +54,9 @@ Interacting with the Merchant opens a 'SHOP' state where the player can exchange
 
 
 
-Phase 13: Multiple Map Support (Zone Transitions)
+Phase 13: Multiple Map Support (Zone Transitions) [DONE]
+
+Status note: three zones ship, loaded from the new MAPS registry in overworld.js — Forest Clearing, Elderbrook town, and Echo Hollow cave. Warp squares are visible yellow portal tiles in all three maps (forest south path end and west treeline, the town's south street, and the cave's west wall); the bidirectional returns land the player beside the entrance on the far side. Encounters are per-map — forest 15% per step with a 50-50 goblin/wolf pool, town 0% (safe), cave 20% with a 70/30 wolf/goblin pool — with a fresh 3-step grace on every map entry. The overworld HUD shows the current map name, and Elderbrook adds a second Merchant plus the Town Elder.
 
 
 
